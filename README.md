@@ -156,7 +156,7 @@ docker compose up -d
 
 | Kind | Examples / notes |
 | --- | --- |
-| `Package` | One per configured monorepo package with detected `framework`, `framework_version`, `typescript`, `styling`, `router`, `state_management`, `ui_library`, `build_tool`, `package_manager`, and a detection `confidence` |
+| `Package` | One per configured monorepo package with detected `framework` (React / Next.js / Vue / Angular / Svelte / SvelteKit / **NestJS** / Odoo), `framework_version`, `typescript`, `styling`, `router`, `state_management`, `ui_library`, `build_tool`, `package_manager`, and a detection `confidence`. Framework detection walks up to the monorepo root for lockfiles + workspace-hoisted dependencies. |
 | `File` | TS/TSX files with language, LOC, and framework flags (`is_controller`, `is_component`, …) |
 | `Class` | NestJS controllers, injectables, modules, entities, resolvers |
 | `Function` | Exported functions and React components |

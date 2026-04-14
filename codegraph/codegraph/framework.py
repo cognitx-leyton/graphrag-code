@@ -23,7 +23,7 @@ import re
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Optional
+from typing import Iterator, Optional
 
 
 class FrameworkType(Enum):
@@ -35,6 +35,7 @@ class FrameworkType(Enum):
     ANGULAR = "angular"
     SVELTE = "svelte"
     SVELTEKIT = "sveltekit"
+    NESTJS = "nestjs"
     ODOO = "odoo"
     UNKNOWN = "unknown"
 
@@ -50,6 +51,7 @@ FRAMEWORK_DISPLAY = {
     FrameworkType.ANGULAR: "Angular",
     FrameworkType.SVELTE: "Svelte",
     FrameworkType.SVELTEKIT: "SvelteKit",
+    FrameworkType.NESTJS: "NestJS",
     FrameworkType.ODOO: "Odoo",
     FrameworkType.UNKNOWN: "Unknown",
 }
@@ -77,6 +79,15 @@ class FrameworkDetector:
     """Scored heuristic detector over ``package.json`` + config files + code."""
 
     FRAMEWORK_INDICATORS = {
+        FrameworkType.NESTJS: {
+            "files": ["nest-cli.json"],
+            "dependencies": ["@nestjs/core", "@nestjs/common"],
+            "patterns": [
+                r"@Module\s*\(",
+                r"@Injectable\s*\(",
+                r"@Controller\s*\(",
+            ],
+        },
         FrameworkType.NEXTJS: {
             "files": ["next.config.js", "next.config.mjs", "next.config.ts", ".next"],
             "dependencies": ["next"],
@@ -177,6 +188,29 @@ class FrameworkDetector:
         self.project_path = Path(project_path)
         self._package_json: Optional[dict] = None
         self._files_cache: Optional[list[Path]] = None
+        self._workspace_deps_cache: Optional[set[str]] = None
+
+    # ── monorepo walk-up ────────────────────────────────────────────────
+
+    def _walk_up_to_repo_root(self, max_hops: int = 10) -> Iterator[Path]:
+        """Yield ``project_path`` then each parent, stopping at a git root
+        or the filesystem root.
+
+        A directory is considered the git root if it contains a ``.git``
+        entry (file or directory — git worktrees use a file). The iterator
+        *yields* that git-root path before terminating. ``max_hops`` caps
+        the walk at 10 — no real monorepo nests that deep, and this keeps
+        pathological invocations bounded.
+        """
+        current = self.project_path
+        for _ in range(max_hops):
+            yield current
+            if (current / ".git").exists():
+                return
+            parent = current.parent
+            if parent == current:
+                return
+            current = parent
 
     # ── package.json / dependency helpers ───────────────────────────────
 
@@ -192,25 +226,74 @@ class FrameworkDetector:
         return self._package_json
 
     @property
+    def _workspace_dependencies(self) -> set[str]:
+        """Deps from the package's own ``package.json`` plus any parent
+        ``package.json`` found walking up that declares a ``workspaces`` field.
+
+        The ``workspaces`` guard prevents leakage: if codegraph is run from a
+        subdirectory of an unrelated enclosing project, that parent's deps
+        won't be picked up unless it's explicitly a monorepo root.
+        """
+        if self._workspace_deps_cache is not None:
+            return self._workspace_deps_cache
+
+        merged: set[str] = set()
+        if self.package_json:
+            for key in ("dependencies", "devDependencies", "peerDependencies"):
+                section = self.package_json.get(key)
+                if isinstance(section, dict):
+                    merged.update(section.keys())
+
+        for path in self._walk_up_to_repo_root():
+            if path == self.project_path:
+                continue
+            pj_path = path / "package.json"
+            if not pj_path.exists():
+                continue
+            try:
+                pj = json.loads(pj_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if "workspaces" not in pj:
+                continue
+            for key in ("dependencies", "devDependencies", "peerDependencies"):
+                section = pj.get(key)
+                if isinstance(section, dict):
+                    merged.update(section.keys())
+
+        self._workspace_deps_cache = merged
+        return merged
+
+    @property
     def all_dependencies(self) -> set[str]:
-        pj = self.package_json
-        if not pj:
-            return set()
-        deps: set[str] = set()
-        for key in ("dependencies", "devDependencies", "peerDependencies"):
-            section = pj.get(key)
-            if isinstance(section, dict):
-                deps.update(section.keys())
-        return deps
+        return self._workspace_dependencies
 
     def _get_dependency_version(self, dep: str) -> Optional[str]:
+        # Own package.json first — most specific.
         pj = self.package_json
-        if not pj:
-            return None
-        for key in ("dependencies", "devDependencies", "peerDependencies"):
-            section = pj.get(key)
-            if isinstance(section, dict) and dep in section:
-                return section[dep]
+        if pj:
+            for key in ("dependencies", "devDependencies", "peerDependencies"):
+                section = pj.get(key)
+                if isinstance(section, dict) and dep in section:
+                    return section[dep]
+
+        # Fall back to workspace-root package.json for hoisted deps.
+        for path in self._walk_up_to_repo_root():
+            if path == self.project_path:
+                continue
+            pj_path = path / "package.json"
+            if not pj_path.exists():
+                continue
+            try:
+                parent_pj = json.loads(pj_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if "workspaces" not in parent_pj:
+                continue
+            for key in ("dependencies", "devDependencies", "peerDependencies"):
+                section = parent_pj.get(key)
+                if isinstance(section, dict) and dep in section:
+                    return section[dep]
         return None
 
     def _check_file_exists(self, filename: str) -> bool:
@@ -300,14 +383,21 @@ class FrameworkDetector:
         return None
 
     def _detect_package_manager(self) -> Optional[str]:
-        if self._check_file_exists("pnpm-lock.yaml"):
-            return "pnpm"
-        if self._check_file_exists("yarn.lock"):
-            return "yarn"
-        if self._check_file_exists("package-lock.json"):
-            return "npm"
-        if self._check_file_exists("bun.lockb") or self._check_file_exists("bun.lock"):
-            return "bun"
+        """Walk up from the package root looking for a lockfile.
+
+        Monorepos store the lockfile at the repo root, not at each package
+        root — so checking only :attr:`project_path` misses it. We walk up
+        until a lockfile is found or we hit the git/filesystem root.
+        """
+        for path in self._walk_up_to_repo_root():
+            if (path / "pnpm-lock.yaml").exists():
+                return "pnpm"
+            if (path / "yarn.lock").exists():
+                return "yarn"
+            if (path / "package-lock.json").exists():
+                return "npm"
+            if (path / "bun.lockb").exists() or (path / "bun.lock").exists():
+                return "bun"
         return None
 
     # ── Odoo short-circuit ──────────────────────────────────────────────
@@ -386,6 +476,8 @@ class FrameworkDetector:
             version = self._get_dependency_version("@angular/core")
         elif best_framework in (FrameworkType.SVELTE, FrameworkType.SVELTEKIT):
             version = self._get_dependency_version("svelte")
+        elif best_framework == FrameworkType.NESTJS:
+            version = self._get_dependency_version("@nestjs/core")
 
         return FrameworkInfo(
             framework=best_framework,
