@@ -8,6 +8,7 @@ from neo4j import Driver, GraphDatabase
 
 from .resolver import Index
 from .schema import (
+    BELONGS_TO,
     CALLS,
     CALLS_ENDPOINT,
     CONTRIBUTED_BY,
@@ -34,6 +35,7 @@ from .schema import (
     INJECTS,
     LAST_MODIFIED_BY,
     OWNED_BY,
+    PackageNode,
     PROVIDES,
     READS_ATOM,
     READS_ENV,
@@ -72,6 +74,7 @@ _CONSTRAINTS = [
     "CREATE CONSTRAINT author_email IF NOT EXISTS FOR (n:Author) REQUIRE n.email IS UNIQUE",
     "CREATE CONSTRAINT team_name IF NOT EXISTS FOR (n:Team) REQUIRE n.name IS UNIQUE",
     "CREATE CONSTRAINT route_id IF NOT EXISTS FOR (n:Route) REQUIRE n.id IS UNIQUE",
+    "CREATE CONSTRAINT package_name IF NOT EXISTS FOR (n:Package) REQUIRE n.name IS UNIQUE",
 ]
 
 _INDEXES = [
@@ -97,6 +100,8 @@ class LoadStats:
     columns: int = 0
     gql_operations: int = 0
     atoms: int = 0
+    packages: int = 0
+    belongs_to_edges: int = 0
     edges: dict = field(default_factory=dict)
 
 
@@ -191,6 +196,10 @@ class Neo4jLoader:
                 MATCH (f:File {path: r.path})
                 SET f:TestFile
             """, [dict(path=f.path) for f in files if f.is_test])
+
+            # ── Packages + BELONGS_TO edges ───────────────────────
+            _write_packages(s, index.packages, stats)
+            _write_belongs_to(s, files, stats)
 
             # ── Classes ───────────────────────────────────────────
             _run(s, """
@@ -363,6 +372,63 @@ def _run(session, cypher: str, rows: list) -> None:
     for i in range(0, len(rows), BATCH):
         chunk = rows[i:i + BATCH]
         session.run(cypher, rows=chunk)
+
+
+def _write_packages(session, packages: list[PackageNode], stats: LoadStats) -> None:
+    """MERGE one ``:Package`` node per configured monorepo package.
+
+    All :class:`~.framework.FrameworkInfo` fields are flattened onto the node
+    so queries can branch by stack in a single hop. The ``name`` is the unique
+    key and matches the ``package`` string property on every :class:`FileNode`.
+    """
+    rows = [
+        dict(
+            name=p.name,
+            framework=p.framework,
+            framework_version=p.framework_version,
+            typescript=p.typescript,
+            styling=p.styling,
+            router=p.router,
+            state_management=p.state_management,
+            ui_library=p.ui_library,
+            build_tool=p.build_tool,
+            package_manager=p.package_manager,
+            confidence=p.confidence,
+        )
+        for p in packages
+    ]
+    _run(session, """
+        UNWIND $rows AS r
+        MERGE (p:Package {name: r.name})
+        SET p.framework         = r.framework,
+            p.framework_version = r.framework_version,
+            p.typescript        = r.typescript,
+            p.styling           = r.styling,
+            p.router            = r.router,
+            p.state_management  = r.state_management,
+            p.ui_library        = r.ui_library,
+            p.build_tool        = r.build_tool,
+            p.package_manager   = r.package_manager,
+            p.confidence        = r.confidence
+    """, rows)
+    stats.packages = len(rows)
+
+
+def _write_belongs_to(session, files, stats: LoadStats) -> None:
+    """MERGE ``(f:File)-[:BELONGS_TO]->(p:Package)`` for every file.
+
+    The edge is redundant with :attr:`FileNode.package` (which stays for the
+    existing ``file_package`` index) but makes Cypher patterns one hop cleaner,
+    e.g. ``MATCH (f:File)-[:BELONGS_TO]->(p:Package {framework:'Next.js'})``.
+    """
+    rows = [dict(path=f.path, package=f.package) for f in files if f.package]
+    _run(session, """
+        UNWIND $rows AS r
+        MATCH (f:File {path: r.path})
+        MATCH (p:Package {name: r.package})
+        MERGE (f)-[:BELONGS_TO]->(p)
+    """, rows)
+    stats.belongs_to_edges = len(rows)
 
 
 def _write_edges(session, edges: list[Edge], stats: LoadStats) -> None:

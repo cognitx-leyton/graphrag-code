@@ -126,6 +126,7 @@ docker compose up -d
 
 | Kind | Examples / notes |
 | --- | --- |
+| `Package` | One per configured monorepo package with detected `framework`, `framework_version`, `typescript`, `styling`, `router`, `state_management`, `ui_library`, `build_tool`, `package_manager`, and a detection `confidence` |
 | `File` | TS/TSX files with language, LOC, and framework flags (`is_controller`, `is_component`, …) |
 | `Class` | NestJS controllers, injectables, modules, entities, resolvers |
 | `Function` | Exported functions and React components |
@@ -137,7 +138,7 @@ docker compose up -d
 
 **Edges**
 
-`IMPORTS`, `IMPORTS_EXTERNAL`, `DEFINES_CLASS`, `DEFINES_FUNC`, `DEFINES_IFACE`, `EXPOSES`, `INJECTS`, `EXTENDS`, `IMPLEMENTS`, `RENDERS`, `USES_HOOK`, `DECORATED_BY`.
+`IMPORTS`, `IMPORTS_EXTERNAL`, `DEFINES_CLASS`, `DEFINES_FUNC`, `DEFINES_IFACE`, `EXPOSES`, `INJECTS`, `EXTENDS`, `IMPLEMENTS`, `RENDERS`, `USES_HOOK`, `DECORATED_BY`, `BELONGS_TO` (File → Package).
 
 ## 🔎 Example queries
 

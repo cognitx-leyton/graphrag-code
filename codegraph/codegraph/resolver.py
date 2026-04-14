@@ -22,6 +22,7 @@ from .schema import (
     IMPORTS_SYMBOL,
     INJECTS,
     MethodNode,
+    PackageNode,
     ParseResult,
     PROVIDES,
     RELATES_TO,
@@ -122,6 +123,8 @@ class Index:
     # Phase 3: endpoint lookup structures
     endpoint_nodes: list = field(default_factory=list)  # list of (EndpointNode, file_id)
     gql_operations: dict[tuple[str, str], list] = field(default_factory=dict)  # (op_type, name) -> list of (op, file)
+    # Phase 9: per-package framework detection
+    packages: list[PackageNode] = field(default_factory=list)
 
     def add(self, result: ParseResult) -> None:
         path = result.file.path

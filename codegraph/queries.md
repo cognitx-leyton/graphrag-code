@@ -17,6 +17,30 @@ CALL db.relationshipTypes() YIELD relationshipType RETURN relationshipType ORDER
 
 ---
 
+## 0. Package & framework inventory
+
+```cypher
+// Every indexed package with its detected framework
+MATCH (p:Package)
+RETURN p.name, p.framework, p.framework_version, p.typescript,
+       p.package_manager, p.build_tool, p.confidence
+ORDER BY p.confidence DESC
+```
+
+```cypher
+// Every file inside any Next.js package (useful for scoping refactors)
+MATCH (f:File)-[:BELONGS_TO]->(p:Package {framework:'Next.js'})
+RETURN f.path LIMIT 50
+```
+
+```cypher
+// React components inside TypeScript packages only
+MATCH (p:Package {typescript:true})<-[:BELONGS_TO]-(f:File)-[:DEFINES_FUNC]->(fn:Function {is_component:true})
+RETURN p.name, fn.name, f.path LIMIT 50
+```
+
+---
+
 ## 1. HTTP API surface audit
 
 ```cypher

@@ -24,12 +24,13 @@ from rich.console import Console
 from rich.table import Table
 
 from .config import ConfigError, load_config, merge_cli_overrides, require_packages
+from .framework import FrameworkDetector
 from .ignore import IgnoreConfigError, IgnoreFilter
 from .loader import Neo4jLoader
 from .ownership import collect_ownership
 from .parser import TsParser
 from .resolver import Index, Resolver, link_cross_file, load_package_config
-from .schema import RouteNode
+from .schema import PackageNode, RouteNode
 
 app = typer.Typer(
     help="codegraph — map a TS/TSX codebase into Neo4j and query it.",
@@ -173,6 +174,16 @@ def _run_index(
             continue
         pkg_configs.append(load_package_config(repo, pkg_dir))
         say(f"  [green]•[/] {pkg_path}: aliases={list(pkg_configs[-1].aliases.keys())}")
+
+        info = FrameworkDetector(pkg_dir).detect()
+        pkg_node = PackageNode.from_framework_info(pkg_configs[-1].name, info)
+        index_obj.packages.append(pkg_node)
+        version_str = f" v{info.version}" if info.version else ""
+        say(
+            f"    [cyan]framework[/] {pkg_node.framework}{version_str} "
+            f"(conf {info.confidence:.0%}, ts={info.typescript}, "
+            f"pm={info.package_manager or '?'})"
+        )
     if not pkg_configs:
         raise ConfigError(
             "No valid packages found — every configured package was missing on "
