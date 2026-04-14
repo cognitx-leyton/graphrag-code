@@ -1,0 +1,25 @@
+services:
+  neo4j:
+    image: neo4j:5.24-community
+    container_name: codegraph-neo4j
+    ports:
+      - "7475:7474"
+      - "7688:7687"
+    environment:
+      NEO4J_AUTH: neo4j/codegraph123
+      NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_dbms_security_procedures_unrestricted: apoc.*
+      NEO4J_server_memory_heap_initial__size: 1G
+      NEO4J_server_memory_heap_max__size: 2G
+    volumes:
+      - codegraph_neo4j_data:/data
+      - codegraph_neo4j_logs:/logs
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  codegraph_neo4j_data:
+  codegraph_neo4j_logs:
