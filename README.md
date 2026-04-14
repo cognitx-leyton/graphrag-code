@@ -9,21 +9,22 @@
 ![NestJS](https://img.shields.io/badge/nestjs-aware-E0234E?style=flat-square&logo=nestjs&logoColor=white)
 ![React](https://img.shields.io/badge/react-aware-61DAFB?style=flat-square&logo=react&logoColor=black)
 
-`graphrag-code` turns a TypeScript/TSX repository into a queryable knowledge graph. It walks the AST, recognises framework constructs (NestJS controllers, modules, DI; React components and hooks), and loads the result into Neo4j. You can then ask structural questions — dependency chains, endpoint inventories, component usage, hubs of DI — in Cypher, or feed the graph into a retrieval-augmented LLM workflow.
+`graphrag-code` turns a TypeScript/TSX repository into a queryable **code knowledge graph** — a structured retrieval backend for **[Claude Code](https://www.anthropic.com/claude-code)**, **Claude**, and other **AI coding agents**. It walks the AST, recognises framework constructs (NestJS controllers, modules, DI; React components and hooks), and loads the result into Neo4j. Your agent can then ask *architectural* questions — dependency chains, endpoint inventories, component usage, hubs of DI — in Cypher, instead of fuzzy-matching code chunks with embeddings.
 
-Built at **[Leyton CognitX](https://cognitx.leyton.com/)** to make large TypeScript monorepos legible to humans and LLMs alike.
+Built at **[Leyton CognitX](https://cognitx.leyton.com/)** to make large TypeScript monorepos legible to humans, to Claude, and to LLM agents alike.
 
 ## ✨ Highlights
 
 - **Framework-aware parsing** — not just imports: controllers, injectables, modules, entities, React components and hooks are first-class nodes.
 - **Neo4j-backed** — every relationship is a Cypher query away. Dependency walks, shortest paths, DI chains, orphan detection, all out of the box.
-- **GraphRAG-ready** — the typed graph is a structured retrieval layer for LLM agents that need architectural context, not just nearest-neighbour chunks.
+- **Claude Code & AI agent native** — the typed graph is a structured retrieval backend for Claude Code, Claude, and other coding agents that need architectural context, not just nearest-neighbour code chunks.
 - **Monorepo-friendly** — scope indexing to specific packages (`twenty-server`, `twenty-front`, …) and exclude build/test artefacts by default.
 - **Batteries included** — a Typer CLI (`index`, `query`, `validate`), Docker Compose for Neo4j, and a library of example Cypher queries.
 
 ## 📑 Table of Contents
 
 - [Why a code knowledge graph?](#-why-a-code-knowledge-graph)
+- [Using with Claude Code & AI agents](#-using-with-claude-code--ai-agents)
 - [Architecture](#-architecture)
 - [Quickstart](#-quickstart)
 - [Graph schema](#-graph-schema)
@@ -45,6 +46,36 @@ Vector search over raw code chunks is a blunt instrument. It finds lexically sim
 - **Architecture audits** — find hubs, cycles, orphans, tangled modules.
 - **Safer refactors** — understand the blast radius of a change before you make it.
 - **Onboarding** — let new engineers query the codebase in plain Cypher instead of reading files top-to-bottom.
+
+## 🤖 Using with Claude Code & AI agents
+
+`graphrag-code` is designed as a drop-in retrieval backend for agentic coding workflows. The typical pattern for [Claude Code](https://www.anthropic.com/claude-code) (and any other LLM coding agent — Cursor, Aider, Continue, custom MCP clients):
+
+1. **Index your repo once** (see [Quickstart](#-quickstart)) — `codegraph.cli index` walks the AST and loads the graph into Neo4j.
+2. **Expose the graph to your agent** — either via a thin MCP server, a CLI wrapper the agent can shell out to, or direct Bolt queries from tool-call handlers.
+3. **Let the agent ask architectural questions** in Cypher *before* editing code.
+
+### Why this beats embedding-only RAG for coding agents
+
+Claude Code and other coding agents work best with **structured, low-noise context**. Vector search over code chunks pulls back things that *look* similar; a typed graph answers the question the agent is *actually* asking:
+
+| Agent question | Graph query |
+| --- | --- |
+| *"What would break if I rename `AuthService`?"* | Reverse `INJECTS` + `IMPORTS*` traversal |
+| *"What endpoints does `UserController` expose?"* | `EXPOSES` direct lookup |
+| *"Which React components call `useAuth`?"* | `USES_HOOK` lookup |
+| *"How is this file reached from the auth entrypoint?"* | `shortestPath` on `IMPORTS` |
+| *"Which services are DI hubs I should treat as core?"* | `INJECTS` aggregation |
+
+All answered in single-digit milliseconds, with zero tokens spent on retrieving irrelevant snippets.
+
+### Exposing the graph to Claude via MCP
+
+A first-class **[Model Context Protocol](https://modelcontextprotocol.io/)** server wrapping the graph is on the [Roadmap](#-roadmap). In the meantime, you can:
+
+- Let Claude Code shell out to `codegraph query "<cypher>"` via its bash tool.
+- Write a small MCP server that exposes a `query_graph` tool backed by the Neo4j driver.
+- Query Bolt directly from any agent framework that supports custom tools.
 
 ## 🏗️ Architecture
 
