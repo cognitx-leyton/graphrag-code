@@ -1,0 +1,7 @@
+# Code owners for graphrag-code
+#
+# GitHub uses this file to enforce "Require review from Code Owners" on
+# protected branches. Every PR into main, release, or hotfix must be
+# approved by someone listed here.
+
+*   @egouilliard-leyton

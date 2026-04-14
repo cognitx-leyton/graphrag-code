@@ -2,6 +2,7 @@
 
 ***A Neo4j code knowledge graph for TypeScript codebases — index NestJS and React code, then answer architecture questions with Cypher.***
 
+![License](https://img.shields.io/badge/license-Apache%202.0-D22128?style=flat-square)
 ![Python](https://img.shields.io/badge/python-3.10+-3776AB?style=flat-square&logo=python&logoColor=white)
 ![Neo4j](https://img.shields.io/badge/neo4j-5.24-008CC1?style=flat-square&logo=neo4j&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/typescript-ready-3178C6?style=flat-square&logo=typescript&logoColor=white)
@@ -29,6 +30,7 @@ Built at **[Leyton CognitX](https://cognitx.leyton.com/)** to make large TypeScr
 - [Example queries](#-example-queries)
 - [Configuration](#-configuration)
 - [Roadmap](#-roadmap)
+- [Contributing](#-contributing)
 - [License](#-license)
 
 ## 🧠 Why a code knowledge graph?
@@ -147,6 +149,16 @@ Indexing excludes `node_modules`, `dist`, `build`, `.next`, `.turbo`, `coverage`
 - First-class MCP server exposing the graph to LLM agents
 - Pre-built RAG retrievers for common architecture questions
 
+## 🤝 Contributing
+
+PRs welcome. The repository uses protected branches:
+
+- **`main`** — production-ready code. All changes land here via PR.
+- **`release`** — release-candidate branch. Stabilisation before tagging.
+- **`hotfix`** — urgent fixes that need to skip the normal cycle.
+
+Every PR into `main`, `release`, or `hotfix` requires a Code Owner review (see [`CODEOWNERS`](CODEOWNERS)). Please open an issue before a large refactor so we can align on direction.
+
 ## 📄 License
 
-Internal to [Leyton CognitX](https://cognitx.leyton.com/). All rights reserved.
+Licensed under the [Apache License 2.0](LICENSE). Copyright © [Leyton CognitX](https://cognitx.leyton.com/) and contributors.
