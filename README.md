@@ -104,8 +104,13 @@ Restart Claude Code. Five tools become available:
 | `list_packages()` | Every indexed monorepo package with its detected framework, version, TypeScript flag, package manager, and detection confidence. |
 | `callers_of_class(class_name, max_depth)` | Blast-radius traversal over `INJECTS` / `EXTENDS` / `IMPLEMENTS`. The canonical "what breaks if I rename X" query. |
 | `endpoints_for_controller(controller_name)` | HTTP routes exposed by a NestJS controller class (method + path + handler). |
+| `files_in_package(name, limit)` | List files belonging to a `:Package` by name. |
+| `hook_usage(hook_name, limit)` | Which components / functions use a given React hook. |
+| `gql_operation_callers(op_name, op_type, limit)` | Who calls a GraphQL query / mutation / subscription, optionally narrowed by type. |
+| `most_injected_services(limit)` | Rank `@Injectable` classes by number of unique callers — the classic "DI hub detection" query. |
+| `find_class(name_pattern, limit)` | Case-sensitive substring search over class names, backed by the `class_name` index. |
 
-All five tools share a single long-lived Neo4j driver and open sessions in `READ_ACCESS` mode. Configuration is env-var only (the same `CODEGRAPH_NEO4J_*` vars the CLI uses). The server is stdio-only — no network exposure.
+All ten tools share a single long-lived Neo4j driver and open sessions in `READ_ACCESS` mode. Configuration is env-var only (the same `CODEGRAPH_NEO4J_*` vars the CLI uses). The server is stdio-only — no network exposure.
 
 ## 🏗️ Architecture
 

@@ -259,3 +259,234 @@ def test_read_session_is_read_only(monkeypatch):
         pass
     from neo4j import READ_ACCESS
     assert captured.get("default_access_mode") == READ_ACCESS
+
+
+# ── _validate_limit ─────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [0, -1, 1001, "10", None, 3.5, True, False],
+)
+def test_validate_limit_rejects(bad):
+    assert mcp_mod._validate_limit(bad) is not None
+
+
+@pytest.mark.parametrize("good", [1, 50, 1000])
+def test_validate_limit_accepts(good):
+    assert mcp_mod._validate_limit(good) is None
+
+
+def test_validate_limit_custom_max():
+    assert mcp_mod._validate_limit(50, max_limit=100) is None
+    assert mcp_mod._validate_limit(101, max_limit=100) is not None
+
+
+# ── files_in_package ────────────────────────────────────────────────
+
+
+def test_files_in_package_happy_path(monkeypatch):
+    driver = _patch(
+        monkeypatch,
+        [[
+            {
+                "path": "packages/srv/src/a.ts",
+                "language": "ts",
+                "loc": 120,
+                "is_controller": False,
+                "is_component": False,
+                "is_injectable": True,
+                "is_module": False,
+                "is_entity": False,
+            }
+        ]],
+    )
+    out = mcp_mod.files_in_package("srv")
+    assert len(out) == 1
+    assert out[0]["path"] == "packages/srv/src/a.ts"
+    cypher, params = driver.session_obj.calls[0]
+    assert "(f:File {package: $name})" in cypher
+    assert "LIMIT 50" in cypher
+    assert params == {"name": "srv"}
+
+
+def test_files_in_package_interpolates_custom_limit(monkeypatch):
+    driver = _patch(monkeypatch, [[]])
+    mcp_mod.files_in_package("srv", limit=250)
+    cypher, _ = driver.session_obj.calls[0]
+    assert "LIMIT 250" in cypher
+
+
+def test_files_in_package_rejects_bad_limit(monkeypatch):
+    _patch(monkeypatch, [[]])
+    out = mcp_mod.files_in_package("srv", limit=0)
+    assert out == [{"error": "limit must be an integer in 1..1000"}]
+
+
+# ── hook_usage ──────────────────────────────────────────────────────
+
+
+def test_hook_usage_happy_path(monkeypatch):
+    driver = _patch(
+        monkeypatch,
+        [[
+            {"name": "LoginForm", "file": "src/ui/LoginForm.tsx", "is_component": True},
+            {"name": "useAuthGate", "file": "src/hooks/useAuthGate.ts", "is_component": False},
+        ]],
+    )
+    out = mcp_mod.hook_usage("useAuth")
+    assert [row["name"] for row in out] == ["LoginForm", "useAuthGate"]
+    cypher, params = driver.session_obj.calls[0]
+    assert "(fn:Function)-[:USES_HOOK]->(:Hook {name: $hook_name})" in cypher
+    assert "DISTINCT" in cypher
+    assert params == {"hook_name": "useAuth"}
+
+
+def test_hook_usage_empty_result(monkeypatch):
+    _patch(monkeypatch, [[]])
+    assert mcp_mod.hook_usage("useNonexistent") == []
+
+
+def test_hook_usage_rejects_bad_limit(monkeypatch):
+    _patch(monkeypatch, [[]])
+    out = mcp_mod.hook_usage("useAuth", limit=-5)
+    assert out == [{"error": "limit must be an integer in 1..1000"}]
+
+
+# ── gql_operation_callers ───────────────────────────────────────────
+
+
+def test_gql_operation_callers_no_type_filter(monkeypatch):
+    driver = _patch(
+        monkeypatch,
+        [[
+            {
+                "caller_name": "UserListPage",
+                "caller_file": "src/pages/UserList.tsx",
+                "caller_kind": "Function",
+                "op_type": "query",
+                "return_type": "UserConnection",
+            }
+        ]],
+    )
+    out = mcp_mod.gql_operation_callers("findManyUsers")
+    assert out[0]["caller_kind"] == "Function"
+    cypher, params = driver.session_obj.calls[0]
+    assert "labels(caller)[0] AS caller_kind" in cypher
+    assert params == {"op_name": "findManyUsers", "op_type": None}
+
+
+def test_gql_operation_callers_with_type(monkeypatch):
+    driver = _patch(monkeypatch, [[]])
+    mcp_mod.gql_operation_callers("createUser", op_type="mutation")
+    _, params = driver.session_obj.calls[0]
+    assert params == {"op_name": "createUser", "op_type": "mutation"}
+
+
+@pytest.mark.parametrize("bad_type", ["fetch", "qurey", "QUERY", "", "subscription ", "all"])
+def test_gql_operation_callers_rejects_bad_op_type(monkeypatch, bad_type):
+    _patch(monkeypatch, [[]])
+    out = mcp_mod.gql_operation_callers("findManyUsers", op_type=bad_type)
+    assert out == [{"error": "op_type must be one of 'query' | 'mutation' | 'subscription'"}]
+
+
+# ── most_injected_services ──────────────────────────────────────────
+
+
+def test_most_injected_services_happy_path(monkeypatch):
+    driver = _patch(
+        monkeypatch,
+        [[
+            {"name": "ConfigService", "file": "src/config/config.service.ts",
+             "injections": 136, "is_controller": False},
+            {"name": "AuthService", "file": "src/auth/auth.service.ts",
+             "injections": 87, "is_controller": False},
+        ]],
+    )
+    out = mcp_mod.most_injected_services(limit=5)
+    assert out[0]["injections"] == 136
+    cypher, _ = driver.session_obj.calls[0]
+    assert "(svc:Class {is_injectable: true})<-[:INJECTS]-(caller:Class)" in cypher
+    assert "count(DISTINCT caller)" in cypher
+    assert "LIMIT 5" in cypher
+    assert "ORDER BY injections DESC" in cypher
+
+
+def test_most_injected_services_tight_limit_cap(monkeypatch):
+    _patch(monkeypatch, [[]])
+    out = mcp_mod.most_injected_services(limit=500)
+    assert out == [{"error": "limit must be an integer in 1..100"}]
+
+
+# ── find_class ──────────────────────────────────────────────────────
+
+
+def test_find_class_happy_path(monkeypatch):
+    driver = _patch(
+        monkeypatch,
+        [[
+            {"name": "AuthService", "file": "src/auth/auth.service.ts",
+             "is_controller": False, "is_injectable": True, "is_module": False,
+             "is_entity": False, "is_resolver": False},
+            {"name": "AuthGuard", "file": "src/auth/auth.guard.ts",
+             "is_controller": False, "is_injectable": True, "is_module": False,
+             "is_entity": False, "is_resolver": False},
+        ]],
+    )
+    out = mcp_mod.find_class("Auth")
+    assert [r["name"] for r in out] == ["AuthService", "AuthGuard"]
+    cypher, params = driver.session_obj.calls[0]
+    assert "c.name CONTAINS $name_pattern" in cypher
+    assert params == {"name_pattern": "Auth"}
+
+
+def test_find_class_rejects_empty_pattern(monkeypatch):
+    _patch(monkeypatch, [[]])
+    out = mcp_mod.find_class("")
+    assert out == [{"error": "name_pattern must be non-empty"}]
+
+
+def test_find_class_rejects_bad_limit(monkeypatch):
+    _patch(monkeypatch, [[]])
+    out = mcp_mod.find_class("Auth", limit=99999)
+    assert out == [{"error": "limit must be an integer in 1..1000"}]
+
+
+# ── Parametrized error paths across all new tools ───────────────────
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda: mcp_mod.files_in_package("srv"),
+        lambda: mcp_mod.hook_usage("useAuth"),
+        lambda: mcp_mod.gql_operation_callers("findManyUsers"),
+        lambda: mcp_mod.most_injected_services(),
+        lambda: mcp_mod.find_class("Auth"),
+    ],
+)
+def test_new_tools_surface_client_error(monkeypatch, call):
+    _patch(monkeypatch, ClientError("nope"))
+    out = call()
+    assert len(out) == 1 and "error" in out[0]
+    assert "Neo4j rejected query" in out[0]["error"]
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda: mcp_mod.files_in_package("srv"),
+        lambda: mcp_mod.hook_usage("useAuth"),
+        lambda: mcp_mod.gql_operation_callers("findManyUsers"),
+        lambda: mcp_mod.most_injected_services(),
+        lambda: mcp_mod.find_class("Auth"),
+    ],
+)
+def test_new_tools_surface_service_unavailable(monkeypatch, call):
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        _patch(monkeypatch, ServiceUnavailable("down"))
+        out = call()
+    assert len(out) == 1 and "error" in out[0]
+    assert "Neo4j is unreachable" in out[0]["error"]

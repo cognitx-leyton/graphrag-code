@@ -33,7 +33,7 @@ the graph.
 from __future__ import annotations
 
 import os
-from typing import Any
+from typing import Any, Optional
 
 from mcp.server.fastmcp import FastMCP
 from neo4j import READ_ACCESS, Driver, GraphDatabase
@@ -82,6 +82,23 @@ def _err_msg(e: BaseException) -> str:
     """
     msg = getattr(e, "message", None)
     return msg if msg else str(e)
+
+
+def _validate_limit(limit: int, *, max_limit: int = 1000) -> Optional[str]:
+    """Return an error message if ``limit`` is out of range, ``None`` if OK.
+
+    Limits must be interpolated into the Cypher string rather than passed as
+    a bind parameter — Neo4j 5.x rejects ``LIMIT $param`` as a syntax error,
+    so the only way to parameterise is to interpolate. Every caller must
+    validate through this helper before building the Cypher to close the
+    injection surface: if the agent passes a non-int, we reject cleanly
+    instead of letting it land as a format-string exception.
+    """
+    if not isinstance(limit, int) or isinstance(limit, bool):
+        return f"limit must be an integer in 1..{max_limit}"
+    if limit < 1 or limit > max_limit:
+        return f"limit must be an integer in 1..{max_limit}"
+    return None
 
 
 def _run_read(cypher: str, **params: Any) -> list[dict]:
@@ -232,6 +249,159 @@ def endpoints_for_controller(controller_name: str) -> list[dict]:
         "ORDER BY e.path",
         controller_name=controller_name,
     )
+
+
+@mcp.tool()
+def files_in_package(name: str, limit: int = 50) -> list[dict]:
+    """List files belonging to a monorepo package.
+
+    Uses the existing ``file_package`` property index directly rather than
+    hopping through ``:BELONGS_TO`` — faster, same result. Returns an empty
+    list for unknown package names (no error; the empty result *is* the
+    answer).
+
+    Args:
+        name: Exact ``:Package.name`` (equivalently ``:File.package``), e.g.
+            ``"twenty-server"`` or ``"packages/web"`` depending on how the
+            monorepo was configured.
+        limit: Max rows to return. Integer in 1..1000, default 50.
+    """
+    err = _validate_limit(limit)
+    if err:
+        return [{"error": err}]
+    cypher = (
+        "MATCH (f:File {package: $name}) "
+        "RETURN f.path AS path, f.language AS language, f.loc AS loc, "
+        "       f.is_controller AS is_controller, f.is_component AS is_component, "
+        "       f.is_injectable AS is_injectable, f.is_module AS is_module, "
+        "       f.is_entity AS is_entity "
+        f"ORDER BY f.path LIMIT {limit}"
+    )
+    return _run_read(cypher, name=name)
+
+
+@mcp.tool()
+def hook_usage(hook_name: str, limit: int = 50) -> list[dict]:
+    """Return the functions / components that use a given React hook.
+
+    Direction in the graph is ``(:Function)-[:USES_HOOK]->(:Hook)``.
+    ``fn.is_component`` is included so the agent can tell apart true React
+    components from helper functions that happen to live in the same file.
+
+    Args:
+        hook_name: Exact ``:Hook.name`` (e.g. ``"useAuth"``, ``"useDeepMemo"``).
+            Only custom hooks that codegraph detected are present as
+            ``:Hook`` nodes — built-in React hooks like ``useState`` are
+            imports, not nodes.
+        limit: Max rows to return. Integer in 1..1000, default 50.
+    """
+    err = _validate_limit(limit)
+    if err:
+        return [{"error": err}]
+    cypher = (
+        "MATCH (fn:Function)-[:USES_HOOK]->(:Hook {name: $hook_name}) "
+        "RETURN DISTINCT fn.name AS name, fn.file AS file, "
+        "       fn.is_component AS is_component "
+        f"ORDER BY fn.name LIMIT {limit}"
+    )
+    return _run_read(cypher, hook_name=hook_name)
+
+
+_GQL_OP_TYPES = ("query", "mutation", "subscription")
+
+
+@mcp.tool()
+def gql_operation_callers(
+    op_name: str,
+    op_type: Optional[str] = None,
+    limit: int = 50,
+) -> list[dict]:
+    """Return callers of a GraphQL operation (query / mutation / subscription).
+
+    Direction in the graph is ``(caller)-[:USES_OPERATION]->(:GraphQLOperation)``.
+    ``op_name`` alone may match multiple operations if the same name exists
+    across query / mutation / subscription types — pass ``op_type`` to narrow.
+
+    ``labels(caller)[0]`` is returned as ``caller_kind`` so the agent can tell
+    apart ``Function`` / ``Method`` / ``Class`` callers without a second query.
+
+    Args:
+        op_name: Exact ``:GraphQLOperation.name``, e.g. ``"findManyUsers"``.
+        op_type: Optional filter, one of ``"query"``, ``"mutation"``,
+            ``"subscription"``. ``None`` (default) returns callers across all
+            three types.
+        limit: Max rows to return. Integer in 1..1000, default 50.
+    """
+    err = _validate_limit(limit)
+    if err:
+        return [{"error": err}]
+    if op_type is not None and op_type not in _GQL_OP_TYPES:
+        return [{
+            "error": "op_type must be one of 'query' | 'mutation' | 'subscription'"
+        }]
+    cypher = (
+        "MATCH (caller)-[:USES_OPERATION]->(op:GraphQLOperation {name: $op_name}) "
+        "WHERE $op_type IS NULL OR op.type = $op_type "
+        "RETURN DISTINCT caller.name AS caller_name, caller.file AS caller_file, "
+        "       labels(caller)[0] AS caller_kind, "
+        "       op.type AS op_type, op.return_type AS return_type "
+        f"ORDER BY caller.name LIMIT {limit}"
+    )
+    return _run_read(cypher, op_name=op_name, op_type=op_type)
+
+
+@mcp.tool()
+def most_injected_services(limit: int = 20) -> list[dict]:
+    """Rank ``@Injectable`` classes by number of unique callers.
+
+    The canonical "DI hub detection" query advertised on the codegraph README
+    front page. Counts distinct caller classes (not raw edges) so a caller
+    injecting the same service into multiple methods still counts once.
+
+    Args:
+        limit: Max rows to return. Integer in 1..100, default 20. Tighter
+            cap than the other tools — nobody wants 1000 hubs.
+    """
+    err = _validate_limit(limit, max_limit=100)
+    if err:
+        return [{"error": err}]
+    cypher = (
+        "MATCH (svc:Class {is_injectable: true})<-[:INJECTS]-(caller:Class) "
+        "RETURN svc.name AS name, svc.file AS file, "
+        "       count(DISTINCT caller) AS injections, "
+        "       svc.is_controller AS is_controller "
+        f"ORDER BY injections DESC LIMIT {limit}"
+    )
+    return _run_read(cypher)
+
+
+@mcp.tool()
+def find_class(name_pattern: str, limit: int = 50) -> list[dict]:
+    """Case-sensitive substring search over class names.
+
+    Backed by the ``class_name`` index so ``CONTAINS`` stays cheap. Bypassing
+    the index via ``toLower()`` for case-insensitive matching would turn this
+    into a full scan; agents can retry with the correct case instead.
+
+    Args:
+        name_pattern: Non-empty substring to match against ``:Class.name``.
+            Empty strings are rejected — they'd match every class in the graph.
+        limit: Max rows to return. Integer in 1..1000, default 50.
+    """
+    if not name_pattern:
+        return [{"error": "name_pattern must be non-empty"}]
+    err = _validate_limit(limit)
+    if err:
+        return [{"error": err}]
+    cypher = (
+        "MATCH (c:Class) WHERE c.name CONTAINS $name_pattern "
+        "RETURN c.name AS name, c.file AS file, "
+        "       c.is_controller AS is_controller, c.is_injectable AS is_injectable, "
+        "       c.is_module AS is_module, c.is_entity AS is_entity, "
+        "       c.is_resolver AS is_resolver "
+        f"ORDER BY c.name LIMIT {limit}"
+    )
+    return _run_read(cypher, name_pattern=name_pattern)
 
 
 # ── Entry point ─────────────────────────────────────────────────────
