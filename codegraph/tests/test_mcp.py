@@ -34,6 +34,14 @@ class _FakeRecord:
 
 
 class _FakeSession:
+    """Fake Neo4j session. Responses are a FIFO queue of per-call row lists.
+
+    Each call to :meth:`run` pops the next response off the queue. Calls past
+    the end of the queue return an empty iterator — this makes test
+    multi-call bugs surface as "no rows" rather than silently reusing the
+    last response (which hides queue-exhaustion bugs).
+    """
+
     def __init__(self, responses: list[list[dict]] | Exception) -> None:
         self._responses = responses
         self.calls: list[tuple[str, dict]] = []
@@ -50,7 +58,7 @@ class _FakeSession:
             raise self._responses
         if not self._responses:
             return iter([])
-        rows = self._responses.pop(0) if len(self._responses) > 1 else self._responses[0]
+        rows = self._responses.pop(0)
         return iter([_FakeRecord(r) for r in rows])
 
 
@@ -139,6 +147,28 @@ def test_describe_schema_stitches_three_queries(monkeypatch):
         "counts": {"Class": 50, "File": 200},
     }
     assert len(driver.session_obj.calls) == 3
+
+
+def test_describe_schema_surfaces_client_error(monkeypatch):
+    """Regression: describe_schema previously used `e.message` directly,
+    which is None on ad-hoc Neo4jError instances. The handler now routes
+    through `_err_msg` like every other tool; verify the fallback works.
+    """
+    _patch(monkeypatch, ClientError("db is read-only for some reason"))
+    out = mcp_mod.describe_schema()
+    assert "error" in out
+    assert "Neo4j rejected query" in out["error"]
+    assert "read-only" in out["error"]
+
+
+def test_describe_schema_surfaces_service_unavailable(monkeypatch):
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        _patch(monkeypatch, ServiceUnavailable("cannot connect"))
+        out = mcp_mod.describe_schema()
+    assert "error" in out
+    assert "Neo4j is unreachable" in out["error"]
 
 
 # ── list_packages ───────────────────────────────────────────────────

@@ -18,6 +18,7 @@ to look.
 """
 from __future__ import annotations
 
+import copy
 import json
 import re
 from dataclasses import dataclass, field
@@ -189,6 +190,7 @@ class FrameworkDetector:
         self._package_json: Optional[dict] = None
         self._files_cache: Optional[list[Path]] = None
         self._workspace_deps_cache: Optional[set[str]] = None
+        self._workspace_pjs_cache: Optional[list[dict]] = None
 
     # ── monorepo walk-up ────────────────────────────────────────────────
 
@@ -225,24 +227,27 @@ class FrameworkDetector:
                     self._package_json = None
         return self._package_json
 
-    @property
-    def _workspace_dependencies(self) -> set[str]:
-        """Deps from the package's own ``package.json`` plus any parent
-        ``package.json`` found walking up that declares a ``workspaces`` field.
+    def _workspace_package_jsons(self) -> list[dict]:
+        """Parse and cache every relevant ``package.json`` walking up.
+
+        Order: own package.json first (most specific), then ancestor
+        ``package.json`` files that declare a ``workspaces`` field. Parsed
+        once on first access and reused by :attr:`_workspace_dependencies`
+        and :meth:`_get_dependency_version`.
 
         The ``workspaces`` guard prevents leakage: if codegraph is run from a
         subdirectory of an unrelated enclosing project, that parent's deps
         won't be picked up unless it's explicitly a monorepo root.
         """
-        if self._workspace_deps_cache is not None:
-            return self._workspace_deps_cache
+        if self._workspace_pjs_cache is not None:
+            return self._workspace_pjs_cache
 
-        merged: set[str] = set()
+        pjs: list[dict] = []
         if self.package_json:
-            for key in ("dependencies", "devDependencies", "peerDependencies"):
-                section = self.package_json.get(key)
-                if isinstance(section, dict):
-                    merged.update(section.keys())
+            # Deep-copy the own package.json so mutation of the cached list
+            # can't corrupt self._package_json. Parent package.jsons (below)
+            # are freshly parsed per walk-up call and don't need this.
+            pjs.append(copy.deepcopy(self.package_json))
 
         for path in self._walk_up_to_repo_root():
             if path == self.project_path:
@@ -256,6 +261,19 @@ class FrameworkDetector:
                 continue
             if "workspaces" not in pj:
                 continue
+            pjs.append(pj)
+
+        self._workspace_pjs_cache = pjs
+        return pjs
+
+    @property
+    def _workspace_dependencies(self) -> set[str]:
+        """Merged dep names from own + workspace-root ``package.json`` files."""
+        if self._workspace_deps_cache is not None:
+            return self._workspace_deps_cache
+
+        merged: set[str] = set()
+        for pj in self._workspace_package_jsons():
             for key in ("dependencies", "devDependencies", "peerDependencies"):
                 section = pj.get(key)
                 if isinstance(section, dict):
@@ -269,29 +287,11 @@ class FrameworkDetector:
         return self._workspace_dependencies
 
     def _get_dependency_version(self, dep: str) -> Optional[str]:
-        # Own package.json first — most specific.
-        pj = self.package_json
-        if pj:
+        """Return the version string for ``dep`` from the first
+        ``package.json`` (own → workspace-root) that declares it."""
+        for pj in self._workspace_package_jsons():
             for key in ("dependencies", "devDependencies", "peerDependencies"):
                 section = pj.get(key)
-                if isinstance(section, dict) and dep in section:
-                    return section[dep]
-
-        # Fall back to workspace-root package.json for hoisted deps.
-        for path in self._walk_up_to_repo_root():
-            if path == self.project_path:
-                continue
-            pj_path = path / "package.json"
-            if not pj_path.exists():
-                continue
-            try:
-                parent_pj = json.loads(pj_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                continue
-            if "workspaces" not in parent_pj:
-                continue
-            for key in ("dependencies", "devDependencies", "peerDependencies"):
-                section = parent_pj.get(key)
                 if isinstance(section, dict) and dep in section:
                     return section[dep]
         return None

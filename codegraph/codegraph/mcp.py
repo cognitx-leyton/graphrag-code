@@ -36,7 +36,7 @@ import os
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
-from neo4j import READ_ACCESS, GraphDatabase
+from neo4j import READ_ACCESS, Driver, GraphDatabase
 from neo4j.exceptions import ClientError, CypherSyntaxError, ServiceUnavailable
 
 from .utils.neo4j_json import clean_row
@@ -51,15 +51,25 @@ _PASS = os.environ.get("CODEGRAPH_NEO4J_PASS", "codegraph123")
 
 # ── Driver lifecycle ────────────────────────────────────────────────
 
-_driver = GraphDatabase.driver(_URI, auth=(_USER, _PASS))
-"""Module-scoped Neo4j driver. One driver, many sessions — mirrors the
-:class:`codegraph.loader.Neo4jLoader` pattern. Tests monkeypatch this
-attribute directly."""
+_driver: "Driver | None" = None
+"""Module-scoped Neo4j driver. Lazily constructed on first tool call so that
+``import codegraph.mcp`` can succeed even when Neo4j is unreachable or the
+env vars are mis-set — the error surfaces as a tool-call error instead of
+an import-time traceback that kills the MCP server before Claude Code can
+see it. Tests monkeypatch this attribute with a fake driver directly."""
+
+
+def _get_driver() -> "Driver":
+    """Return the module-scoped driver, constructing it on first use."""
+    global _driver
+    if _driver is None:
+        _driver = GraphDatabase.driver(_URI, auth=(_USER, _PASS))
+    return _driver
 
 
 def _read_session():
     """Open a read-only session via the module-scoped driver."""
-    return _driver.session(default_access_mode=READ_ACCESS)
+    return _get_driver().session(default_access_mode=READ_ACCESS)
 
 
 def _err_msg(e: BaseException) -> str:
@@ -154,9 +164,9 @@ def describe_schema() -> dict:
                 "MATCH (n) RETURN labels(n)[0] AS label, count(*) AS n"
             ))
     except ClientError as e:
-        return {"error": f"Neo4j rejected query: {e.message}"}
+        return {"error": f"Neo4j rejected query: {_err_msg(e)}"}
     except ServiceUnavailable as e:
-        return {"error": f"Neo4j is unreachable: {e}"}
+        return {"error": f"Neo4j is unreachable: {_err_msg(e)}"}
     counts = {r["label"]: r["n"] for r in count_rows if r["label"]}
     return {"labels": labels, "rel_types": rel_types, "counts": counts}
 
@@ -227,8 +237,9 @@ def endpoints_for_controller(controller_name: str) -> list[dict]:
 # ── Entry point ─────────────────────────────────────────────────────
 
 def main() -> None:
-    """Run the stdio MCP server. Closes the driver on exit."""
+    """Run the stdio MCP server. Closes the driver on exit (if constructed)."""
     try:
         mcp.run(transport="stdio")
     finally:
-        _driver.close()
+        if _driver is not None:
+            _driver.close()
