@@ -207,8 +207,11 @@ def _run_index(
             say(f"[yellow]skip[/] package {pkg_path} (not found at {pkg_dir})")
             continue
 
-        # Auto-detect language: a directory with __init__.py is Python, else TS.
-        if (pkg_dir / "__init__.py").exists():
+        # Auto-detect language: Python if any of these exist at the package
+        # root — legacy (__init__.py), modern (pyproject.toml), or older
+        # (setup.py / setup.cfg). Otherwise fall through to the TS loader.
+        py_markers = ("__init__.py", "pyproject.toml", "setup.py", "setup.cfg")
+        if any((pkg_dir / marker).exists() for marker in py_markers):
             pkg_config = load_python_package_config(repo, pkg_dir)
         else:
             pkg_config = load_package_config(repo, pkg_dir)
