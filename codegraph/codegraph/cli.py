@@ -72,6 +72,24 @@ def _main(ctx: typer.Context) -> None:
         raise typer.Exit(code=run_repl())
 
 
+# ── init ─────────────────────────────────────────────────────────────
+
+@app.command()
+def init(
+    force: bool = typer.Option(False, "--force", help="Overwrite existing files (never CLAUDE.md)."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Non-interactive; accept all defaults."),
+    skip_docker: bool = typer.Option(False, "--skip-docker", help="Write compose file but don't start Neo4j."),
+    skip_index: bool = typer.Option(False, "--skip-index", help="Don't run the initial index."),
+) -> None:
+    """Scaffold codegraph into the current repo — commands, CI gate, config, Neo4j, first index."""
+    from .init import run_init
+    raise typer.Exit(code=run_init(
+        force=force, non_interactive=yes,
+        skip_docker=skip_docker, skip_index=skip_index,
+        console=console,
+    ))
+
+
 # ── repl (explicit) ──────────────────────────────────────────────────
 
 @app.command()
@@ -189,8 +207,11 @@ def _run_index(
             say(f"[yellow]skip[/] package {pkg_path} (not found at {pkg_dir})")
             continue
 
-        # Auto-detect language: a directory with __init__.py is Python, else TS.
-        if (pkg_dir / "__init__.py").exists():
+        # Auto-detect language: Python if any of these exist at the package
+        # root — legacy (__init__.py), modern (pyproject.toml), or older
+        # (setup.py / setup.cfg). Otherwise fall through to the TS loader.
+        py_markers = ("__init__.py", "pyproject.toml", "setup.py", "setup.cfg")
+        if any((pkg_dir / marker).exists() for marker in py_markers):
             pkg_config = load_python_package_config(repo, pkg_dir)
         else:
             pkg_config = load_package_config(repo, pkg_dir)
@@ -464,6 +485,50 @@ def _serialize_report(report) -> dict[str, Any]:
             except TypeError:
                 out[attr] = str(val)
     return out
+
+
+# ── arch-check ───────────────────────────────────────────────────────
+
+@app.command(name="arch-check")
+def arch_check(
+    uri: str = DEFAULT_URI,
+    user: str = DEFAULT_USER,
+    password: str = DEFAULT_PASS,
+    as_json: bool = typer.Option(False, "--json", help="Emit report as JSON on stdout."),
+    config: Optional[Path] = typer.Option(
+        None, "--config",
+        help="Path to .arch-policies.toml (defaults to ./ at the repo root).",
+        exists=True, file_okay=True, dir_okay=False,
+    ),
+    repo: Path = typer.Option(
+        Path("."), "--repo",
+        help="Repo root used for locating .arch-policies.toml.",
+        exists=True, file_okay=False,
+    ),
+) -> None:
+    """Run architecture-conformance policies against the live graph.
+
+    Exits 0 when every policy passes, 1 when any policy reports a violation.
+    Suitable as a CI gate — see ``.github/workflows/arch-check.yml`` for the
+    reference integration.
+    """
+    from .arch_check import run_arch_check
+    from .arch_config import ArchConfigError, load_arch_config
+
+    try:
+        arch_cfg = load_arch_config(repo.resolve(), path=config)
+    except ArchConfigError as exc:
+        console.print(f"[bold red]arch-check config error:[/] {exc}")
+        raise typer.Exit(code=2)
+
+    report = run_arch_check(
+        uri, user, password,
+        console=None if as_json else console,
+        config=arch_cfg,
+    )
+    if as_json:
+        print(report.to_json())
+    raise typer.Exit(code=0 if report.ok else 1)
 
 
 # ── query ────────────────────────────────────────────────────────────
