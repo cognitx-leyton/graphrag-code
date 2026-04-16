@@ -74,3 +74,9 @@ Add a new policy by appending an `echo` header + `codegraph query` block. Keep e
 - "Every `:Entity` class must have at least one `:Column`" (ORM completeness)
 - "No `:Endpoint` may exist without a matching `HANDLES` method" (dead routes — also caught by `/dead-code`)
 - "Shared-types package must not import from any app package" (dependency-direction)
+
+## CI integration
+
+The same three policies also run as `codegraph arch-check` — a first-class CLI subcommand that exits non-zero on any violation and emits a JSON report with `--json`. That's the authoritative runner; this slash command is the interactive convenience wrapper. Both hit the same Cypher, so there's no logic drift.
+
+`.github/workflows/arch-check.yml` wires the CLI into CI (Neo4j as a service container, index-on-PR, exit-code gating). Trigger scope is configured inline at the top of the workflow file — the shipped default is PR-to-main, with commented-out alternatives for push-to-dev and manual `workflow_dispatch`. Edit the `on:` block to match your team's policy. See `codegraph/docs/arch-policies.md` for the policy reference (what each detects, common false positives, how to interpret violations).

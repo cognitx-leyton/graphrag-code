@@ -46,6 +46,16 @@ Five purpose-built wrappers over `/graph` for the patterns you'll reach for most
 | `/trace-endpoint <url_substring>` | Endpoint → handler method → every method reachable within 4 `CALLS` hops. Good for impact analysis + security review |
 | `/arch-check` | Built-in conformance policies: import cycles, cross-package violations, Controller→Repository bypass. Fork the command to add project-specific policies |
 
+### Architecture drift (CI gate)
+
+`codegraph arch-check` is a first-class CLI subcommand that runs the same three built-in policies as `/arch-check` and exits non-zero on any violation. `.github/workflows/arch-check.yml` wires it into CI: on every PR to `main`, GitHub Actions spins up `neo4j:5.24-community` as a service container, indexes the repo with `codegraph index`, runs the check, and uploads the JSON report as a build artifact. Any violation blocks the merge.
+
+**Configuring the trigger scope**: edit the `on:` block at the top of `.github/workflows/arch-check.yml`. The shipped default is `pull_request: branches: [main]` (strictest, lowest-noise). Two commented-out alternatives sit right below it: `push: branches: [dev]` to catch drift the moment it lands, and `workflow_dispatch` for manual runs from the Actions UI. Uncomment what you need.
+
+**Reproducing a failing check locally**: `cd codegraph && codegraph index . -p codegraph/codegraph -p codegraph/tests --skip-ownership && codegraph arch-check`. Exit code mirrors CI.
+
+Policy reference + false-positive guidance: `codegraph/docs/arch-policies.md`.
+
 ### What's indexed (and what isn't)
 
 The slash commands point at `codegraph/codegraph/` (the Python package) and `codegraph/tests/` (its test suite). The package is ~18 files, 41 classes, 82 module functions, ~150 methods; tests add another handful of files that pair back via `TESTS` edges where they share a directory with their production peer. **Not indexed**: the root-level `dependency_slicer.py`, `.venv`, the repo root's config files.

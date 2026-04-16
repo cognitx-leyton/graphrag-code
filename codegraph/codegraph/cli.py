@@ -466,6 +466,32 @@ def _serialize_report(report) -> dict[str, Any]:
     return out
 
 
+# ── arch-check ───────────────────────────────────────────────────────
+
+@app.command(name="arch-check")
+def arch_check(
+    uri: str = DEFAULT_URI,
+    user: str = DEFAULT_USER,
+    password: str = DEFAULT_PASS,
+    as_json: bool = typer.Option(False, "--json", help="Emit report as JSON on stdout."),
+) -> None:
+    """Run architecture-conformance policies against the live graph.
+
+    Exits 0 when every policy passes, 1 when any policy reports a violation.
+    Suitable as a CI gate — see ``.github/workflows/arch-check.yml`` for the
+    reference integration.
+    """
+    from .arch_check import run_arch_check
+
+    report = run_arch_check(
+        uri, user, password,
+        console=None if as_json else console,
+    )
+    if as_json:
+        print(report.to_json())
+    raise typer.Exit(code=0 if report.ok else 1)
+
+
 # ── query ────────────────────────────────────────────────────────────
 
 @app.command()
