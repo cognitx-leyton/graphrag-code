@@ -2,91 +2,68 @@
 
 > **Purpose of this document.** Capture enough context for a fresh agent session (or a human returning after time away) to continue work on codegraph without re-deriving state from scratch. Separate from the user-facing roadmap bullets in `README.md`, which stay short and pitch-oriented.
 >
-> **Last updated:** 2026-04-15 after commit `7588522`.
+> **Last updated:** 2026-04-16 after commits `af77cd3` → `c6da6c6` (slash commands + arch-check CI + onboarding scaffolder).
 
 ---
 
 ## TL;DR — where we are
 
-- **Branch:** `dev` (pushed to `origin/dev`). Six commits ahead of `main`, not yet PR'd.
-- **Tests:** 103/103 passing, 0 warnings. Run via `.venv/bin/python -m pytest tests/` from inside `codegraph/`.
-- **Graph indexed:** Twenty CRM (`/tmp/twenty`, 13460 TS/TSX files) is loaded into the local Neo4j container. Good integration target.
-- **MCP server:** 10 read-only tools live. `codegraph-mcp` console script registered. End-to-end verified via JSON-RPC against the live Twenty graph.
-- **Nothing pushed to `main`.** Whole session's work sits on `dev`.
+- **Branch:** `dev`. Five unpushed commits ahead of `origin/dev` (see list below). Also ahead of `main`: PR #8 (`dev → main`) is open on GitHub with the earlier work.
+- **Tests:** 223 passing + 1 deselected (Docker-slow integration test), 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
+- **Graph indexed:** Twenty CRM is currently loaded into the local Neo4j container at `bolt://localhost:7688` (13,473 files, 2,559 classes, 6,088 methods, 5,562 CALLS, 6,708 hook usages, 4,593 RENDERS).
+- **MCP server:** 10 read-only tools live. `codegraph-mcp` console script registered. Smoke-tested via raw JSON-RPC.
+- **Package:** renamed to `cognitx-codegraph` v0.2.0 in `pyproject.toml`. Wheel + sdist build cleanly. **Not yet on PyPI** — needs one-time operational setup (Trusted Publisher registration).
+- **CI:** `.github/workflows/arch-check.yml` — every PR to `main` spins up Neo4j, indexes, runs `codegraph arch-check`, fails on architecture violations. Verified live on PR #8 (42s, exit 0).
+- **Onboarding:** `codegraph init` scaffolds everything needed to dogfood codegraph in any repo. Live-tested against 3 fixtures including the real Twenty monorepo (13k files indexed end-to-end).
 
 ---
 
-## Shipped this session (six atomic commits on `dev`)
+## Shipped since the last roadmap update (commit `7588522`)
 
 ```
-7588522 feat(mcp):   add 5 pre-built retrievers for common agent questions
-39be5c2 fix(review): address code-reviewer findings across mcp, framework, tests
-e7382f7 fix(framework): detect NestJS, walk up for lockfile + workspace deps
-c198c5d feat(mcp):   stdio server with 5 read-only tools
-9fb4d1d feat(schema): per-package framework detection + :Package nodes
-b71bc45 feat(ignore): .codegraphignore for per-repo file/route/component exclusion
+c6da6c6 fix(cli):       detect modern src-layout Python packages via pyproject.toml
+d0abe53 feat(onboarding): one-command install for any repo via codegraph init
+b12520a chore(ci):      enable workflow_dispatch for arch-check
+55789fd feat(arch-check): first-class CLI subcommand + GitHub Actions gate
+af77cd3 feat(commands): add 5 graph-powered slash commands for daily dev work
+453a6a4 chore(loader):  unify test-file pairing + widen graph index scope
+d48ee26 feat(parser):   emit Python CALLS edges + wire MCP call-graph tools
+edb8cca feat(parser):   extract docstrings, params, and return types for Python
+1cfc590 feat(claude):   wire codegraph CLI into this repo's Claude Code setup
+154954c feat(parser):   index Python codebases via tree-sitter-python (Stage 1)
+09822fa docs(roadmap):  session handoff document for continuing work across agents
 ```
 
-All six commits came from porting pieces of `/tmp/agent-onboarding/architect/` (a related internal repo, Apache-2.0) and then hardening them against real monorepo shapes via an end-to-end test on Twenty CRM.
+Three sessions' worth of work grouped by theme:
 
-### What each commit added
+### Python frontend (Stage 1)
+- `154954c feat(parser)` — `py_parser.py` with tree-sitter-python. Walks modules, classes, methods, imports, decorators. Mirrors `parser.py`'s `ParseResult` contract. Python frontend is an **optional extra** (`pip install "cognitx-codegraph[python]"`), keeps the TS-only install light.
+- `edb8cca feat(parser)` — extend FunctionNode/MethodNode with `docstring`, `return_type`, `params_json`. Parser emits them from Python AST; loader persists them on the node.
+- `d48ee26 feat(parser)` — Python method CALLS edges. Covers `self.foo()` / `cls.foo()` → `"this"`, `self.field.bar()` → `"this.field"`, bare `foo()` / `obj.foo()` → `"name"`, `super().foo()` → new `"super"` resolution via `class_extends`. Confidence="typed" for all first three. Also fixed loader bug where function-level `DECORATED_BY` edges were silently dropped (the partitioner only routed class + method prefixes).
+- `453a6a4 chore(loader)` — shared `TS_TEST_SUFFIXES` / `PY_TEST_PREFIX` / `PY_TEST_SUFFIX_TRAILING` constants in `schema.py`; `_write_test_edges` now pairs Python `test_*.py` / `*_test.py` → `*.py` (same-directory MVP). `codegraph/tests/` included in the default index scope.
 
-**`b71bc45 feat(ignore)`** — `codegraph/codegraph/ignore.py` (new, ~180 LOC).
-- Parses `.codegraphignore` at repo root (or via `--ignore-file` CLI flag).
-- Syntax: gitignore-style file globs + `@route:/admin/*` + `@component:*Admin*` + `!` negation.
-- Hooked into `cli._run_index` at three points: file walk (skip file), `_extract_routes` (skip RouteNode), and a new `_strip_ignored_components` pass (flip `FunctionNode.is_component = False` without deleting the function — preserves IMPORTS/CALL edges).
-- Stripped from the upstream: opinionated `DEFAULT_IGNORE_PATTERNS`, `save_agentignore` / `create_default_agentignore` UX helpers.
-- Renamed `.agentignore` → `.codegraphignore` to match tool convention and avoid clashing if users run both projects.
-- 12 unit tests in `codegraph/tests/test_ignore.py` (plus 7 more added later for `_strip_ignored_components` + `_load_ignore_filter` helpers).
+### Daily slash commands (5 new)
+- `af77cd3 feat(commands)` — `.claude/commands/{blast-radius,dead-code,who-owns,trace-endpoint,arch-check}.md`. Each mirrors the existing `/graph` + `/graph-refresh` frontmatter + narrative. Zero new code; pure Cypher curation over the established MCP surface.
 
-**`9fb4d1d feat(schema)`** — `codegraph/codegraph/framework.py` (new, ~360 LOC originally).
-- `FrameworkDetector` class with scored heuristic: file existence (30 pts) + package.json dep (25 pts) + code-regex pattern (15 pts) per framework.
-- Initial frameworks: React / React-TS / Next.js / Vue / Vue3 / Angular / Svelte / SvelteKit / Odoo (+ Unknown).
-- New `:Package` node in `schema.py` with all `FrameworkInfo` fields inlined: `name`, `framework`, `framework_version`, `typescript`, `styling`, `router`, `state_management`, `ui_library`, `build_tool`, `package_manager`, `confidence`.
-- New `:BELONGS_TO` edge type (File → Package) + `_write_packages` / `_write_belongs_to` functions in `loader.py`.
-- `LoadStats` extended with `packages` and `belongs_to_edges` counters.
-- `Index.packages: list[PackageNode]` added to `resolver.py`.
-- `FrameworkDetector(pkg_dir).detect()` runs once per configured package in `cli._run_index` right after `load_package_config`.
-- 14 unit tests against 6 fixture apps bundled with agent-onboarding (`/tmp/agent-onboarding/tests/fixtures/{react,nextjs,vue,sveltekit,angular,odoo}-app`).
-- 3 new example queries in `codegraph/queries.md`.
+### Architecture-conformance CI gate
+- `55789fd feat(arch-check)` — `codegraph/codegraph/arch_check.py` with `PolicyResult` / `ArchReport` dataclasses mirroring `validate.py`. 3 built-in policies: `import_cycles`, `cross_package`, `layer_bypass`. CLI subcommand `codegraph arch-check [--json]` exits 0/1 per the violation count. `.github/workflows/arch-check.yml` spins up `neo4j:5.24-community` as a service container on every PR to `main`. Full e2e verified on PR #8: 42s, 3/3 PASS, report artifact uploaded.
+- `b12520a chore(ci)` — added `workflow_dispatch` so the gate can be triggered manually from the Actions UI without a PR.
 
-**`c198c5d feat(mcp)`** — `codegraph/codegraph/mcp.py` (new, ~240 LOC originally).
-- FastMCP (`mcp>=1.0`) stdio server registered as `codegraph-mcp` console script via `pyproject.toml`.
-- `mcp` is an **optional extra** — `pip install "codegraph[mcp]"`. Main CLI unaffected if not installed.
-- Five initial tools: `query_graph`, `describe_schema`, `list_packages`, `callers_of_class`, `endpoints_for_controller`.
-- Module-scoped Neo4j driver (started as eager, made lazy in a later commit — see `39be5c2`).
-- Every session opened with `default_access_mode=neo4j.READ_ACCESS` → Neo4j rejects any `CREATE`/`MERGE`/`DELETE`/`SET` at the session level. Verified live: a `DETACH DELETE (f:File)` attempt returned `[{"error": "Writing in read access mode not allowed"}]` and the 13460 file count stayed unchanged.
-- Extracted `clean_row` helper to `codegraph/codegraph/utils/neo4j_json.py` so both cli and mcp share it.
-- 18 unit tests in `codegraph/tests/test_mcp.py` with a `FakeDriver`/`FakeSession`/`FakeRecord` pattern — no real Neo4j needed for tests.
-- README section "Exposing the graph to Claude via MCP" filled in with concrete install + config snippet.
+### Onboarding (`codegraph init`)
+- `d48ee26` (concurrent work) + `d0abe53 feat(onboarding)` — `codegraph init` scaffolds `.claude/commands/` (×7), `.github/workflows/arch-check.yml`, `.arch-policies.toml`, `docker-compose.yml`, and a `CLAUDE.md` snippet. With `--yes` also starts Neo4j via `docker compose up -d`, waits for HTTP readiness, and runs the first index. Flags: `--force`, `--yes`, `--skip-docker`, `--skip-index`. Templates (11 files) live under `codegraph/codegraph/templates/` and ship with the wheel via `[tool.setuptools.package-data]`.
+- **PyPI rename**: `pyproject.toml` name → `cognitx-codegraph` v0.2.0 (the bare `codegraph` name is taken on PyPI at v1.2.0 by a different project). CLI command stays `codegraph` because that's declared separately in `[project.scripts]`. `.github/workflows/release.yml` publishes on `v*` tags via OIDC Trusted Publisher — no token in secrets.
+- **`.arch-policies.toml` config** — `codegraph/codegraph/arch_config.py` parses per-repo policy tuning + user-authored `[[policies.custom]]` Cypher policies. Tunes built-ins (cycle hop range, cross-package pairs, service/repository suffix names). `codegraph arch-check --config <path>` honours explicit overrides.
+- `c6da6c6 fix(cli)` — caught via real-repo e2e: `codegraph index` was misclassifying modern src-layout Python packages (with `pyproject.toml` but no root `__init__.py`) as TS. Fixed by adding `pyproject.toml` / `setup.py` / `setup.cfg` to the Python marker list. Twenty-style TS monorepos unaffected.
 
-**`e7382f7 fix(framework)`** — detector hardening driven by the Twenty e2e test.
-- Twenty end-to-end revealed three bugs: twenty-server mis-labeled as "React TS 65%" instead of NestJS, twenty-front at only 30% confidence (hoisted deps invisible), and `package_manager=null` on both packages (lockfile at monorepo root, not package root).
-- Added `FrameworkType.NESTJS` + `nest-cli.json` / `@nestjs/core` / `@Module|@Injectable|@Controller` indicators. NestJS scores 125 raw points on a real NestJS package vs React's ~80, so it wins the `max(scores)` decisively.
-- New `_walk_up_to_repo_root(max_hops=10)` iterator — yields `project_path` then each parent, stops at a `.git` entry or filesystem root.
-- Rewrote `_detect_package_manager` to walk up for lockfiles.
-- New `_workspace_dependencies` property that merges own `package.json` deps + any parent `package.json` found walking up **whose manifest declares a `workspaces` field**. The workspaces guard prevents leakage from unrelated enclosing projects.
-- 9 new tests including 2 opt-in integration tests against `/tmp/twenty` that skip cleanly if the clone is missing.
+---
 
-**`39be5c2 fix(review)`** — code-reviewer round 1+2 fixes.
-- **Lazy `_driver`.** `mcp._driver` is now `Optional[Driver]`; a new `_get_driver()` constructs it on first tool call. `import codegraph.mcp` no longer touches Neo4j. `main()` closes the driver only if constructed.
-- **`describe_schema` error routing.** Was dereferencing `e.message` directly — `None` on ad-hoc `Neo4jError` instances. Now routes through the shared `_err_msg` like every other tool.
-- **Shared `_workspace_package_jsons()` cache** in `framework.py`. Both `_workspace_dependencies` and `_get_dependency_version` consume one parse-once cache instead of each re-walking and re-parsing on every call. Closes an N × depth disk-read cost on deep monorepos.
-- **Defensive `copy.deepcopy` of own `package_json`** in the workspace cache so iteration-site mutation can't corrupt `self._package_json`.
-- **`_FakeSession.run` always-pops** in the test fake (was conditional — would silently reuse the last response on a 4+ call).
-- +9 new tests: describe_schema error paths, `_strip_ignored_components`, `_load_ignore_filter` resolution branches (default auto-detect, no-config-no-default, explicit-missing-relative, explicit-missing-absolute).
-- Three review rounds total; round 3 returned "clean".
+## Verified working (not just "tests pass")
 
-**`7588522 feat(mcp)`** — 5 additional pre-built retrievers.
-- `files_in_package(name, limit=50)` — uses `(f:File {package:$name})` directly via the existing `file_package` property index.
-- `hook_usage(hook_name, limit=50)` — `(Function)-[:USES_HOOK]->(Hook)`, `DISTINCT` to dedupe multiple call sites, returns `is_component` flag for agent triage.
-- `gql_operation_callers(op_name, op_type=None, limit=50)` — optional filter to `{query, mutation, subscription}`. `labels(caller)[0]` returned as `caller_kind`.
-- `most_injected_services(limit=20, max=100)` — the canonical "DI hub detection" query. `count(DISTINCT caller)` so a caller injecting into multiple methods counts once.
-- `find_class(name_pattern, limit=50)` — case-sensitive `CONTAINS` backed by the `class_name` range index. Empty pattern rejected explicitly.
-- Shared `_validate_limit(limit, max_limit=1000)` helper. Rejects non-int (including `bool`, because `bool` is an `int` subclass in Python) before any Cypher is built. **Limits are validated-then-interpolated because Neo4j 5.x rejects `LIMIT $param` as a syntax error** — every new tool follows the same pattern `callers_of_class.max_depth` does.
-- +41 new tests (parametrized shared error-path coverage across all 5 tools; happy-path + limit-validation + empty-input per tool).
-- End-to-end verified live against Twenty: every tool returned real data. `most_injected_services(5)` surfaced `TwentyConfigService` (136 injections), matching the raw Cypher we ran earlier.
-- Code-reviewer pass returned **clean** on the first round — no fixes needed.
+Beyond unit/integration tests, these were dogfooded against real systems:
+
+- **PR #8 on GitHub** — `cognitx-leyton/graphrag-code` PR `dev → main`, `arch-check` workflow ran 42s, 3/3 PASS, report artifact retrieved. Injected-cycle negative test confirmed exit 1.
+- **Fresh pipx install** — built wheel → `pipx install cognitx_codegraph-0.2.0-py3-none-any.whl[python]` → `codegraph init --yes` in a throwaway synthetic monorepo → Neo4j container up, first index ran, 2 classes + 5 methods indexed.
+- **Real monorepo (Twenty)** — `codegraph init --yes --skip-index` against `/home/edouard-gouilliard/.superset/worktrees/easy-builder/rls-enforcement-plan-implementation/` (13k TS files). Container healthy, scaffold idempotent with pre-existing `.claude/` + `CLAUDE.md`. Separately ran `codegraph index . -p packages/twenty-front -p packages/twenty-server` → 13,473 files parsed in 27s, 70.8% imports resolved, full load in ~3 min. `codegraph arch-check` correctly reported 184,809 real import cycles in `twenty-front/apollo/optimistic-effect/*` and `object-metadata/*`, exit 1.
 
 ---
 
@@ -96,14 +73,14 @@ All six commits came from porting pieces of `/tmp/agent-onboarding/architect/` (
 |---|---|
 | Current branch | `dev` |
 | Base branch | `main` |
-| Commits ahead of `main` | 6 (see above) |
-| Remote status | `dev` pushed to `origin/dev` ✅ |
-| PR | **not opened yet** |
-| Working tree | Clean (only `.claude/` untracked, intentional — agent config) |
-| Test count | 103 |
-| Test runtime | ~10 s |
+| Unpushed commits | 5 (af77cd3 → c6da6c6) |
+| Open PR | #8 `dev → main` (the earlier work; latest 5 commits not yet pushed) |
+| Working tree | Clean modulo session logs; only user-local `.claude/commands/*.md` files pre-existing are untracked (intentional) |
+| Test count | 223 passing + 1 deselected |
+| Test runtime | ~12 s |
 | Byte-compile | Clean |
-| Last `pip install -e .` | After commit `c198c5d` (MCP server). Re-run if you modify `pyproject.toml`. |
+| Last editable install | After `c6da6c6`. Re-run `cd codegraph && .venv/bin/pip install -e .` after any `pyproject.toml` edit. |
+| Wheel built? | Yes — `codegraph/dist/cognitx_codegraph-0.2.0-py3-none-any.whl` (from this session) |
 
 ---
 
@@ -114,58 +91,75 @@ All six commits came from porting pieces of `/tmp/agent-onboarding/architect/` (
 ```bash
 cd codegraph
 python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
-.venv/bin/pip install -e .
-.venv/bin/pip install "mcp>=1.0" pytest    # MCP extra + test deps
+.venv/bin/pip install -e ".[python,mcp,test]"
 ```
 
-- System `python3` (3.12) is fine for `compileall` and `pytest` if pytest is installed globally, but **all CLI-level invocations of `codegraph` / `codegraph-mcp` must go through `.venv/bin/`** because they depend on `typer`, `neo4j`, `tree-sitter`, `rich`, and `mcp` which live in the venv.
-- There is **no system-wide `python`** (no `python` on PATH, only `python3`). Bash tool calls using `python` will fail with command-not-found. Use `python3` or `.venv/bin/python`.
+- `[python]` enables tree-sitter-python (Stage 1 Python frontend).
+- `[mcp]` installs the FastMCP stdio server.
+- `[test]` installs pytest + pytest-cov.
+- All CLI-level invocations of `codegraph` / `codegraph-mcp` must go through `.venv/bin/` OR be installed via `pipx install cognitx-codegraph` (which ships with Python 3.10+ and the tool lives on PATH).
 
 ### Neo4j
 
-The bundled `codegraph/docker-compose.yml` runs Neo4j on:
+`codegraph/docker-compose.yml` runs Neo4j on:
 - Bolt: `bolt://localhost:7688`
 - Browser: `http://localhost:7475`
 - Auth: `neo4j` / `codegraph123`
 
-Start with `cd codegraph && docker compose up -d`. The container name is `codegraph-neo4j`. It's currently **up and healthy** and has the Twenty graph loaded from the last `codegraph index` run.
+Start with `cd codegraph && docker compose up -d`. Container name: `codegraph-neo4j`.
 
-### Twenty CRM fixture
+Note: `codegraph init` scaffolds a *different* docker-compose for the target repo, exposing on ports 7687/7474 by default. Don't confuse the two — the codegraph-repo's dev Neo4j is on 7688/7475.
 
-Cloned at `/tmp/twenty` this session. Shallow clone from `https://github.com/twentyhq/twenty.git`. Two packages that matter for codegraph:
-- `/tmp/twenty/packages/twenty-server` — NestJS backend (v11.1.16, yarn). 2549 classes, 110 endpoints, 428 GraphQL operations.
-- `/tmp/twenty/packages/twenty-front` — React (TypeScript) frontend. Tons of components + hooks.
+### Fixtures
 
-`/tmp/twenty` may or may not survive between sessions — `/tmp` is wiped on reboot. If missing, re-clone with `git clone --depth 1 https://github.com/twentyhq/twenty.git /tmp/twenty`.
-
-The two opt-in integration tests in `tests/test_framework.py` (`test_twenty_server_is_nestjs`, `test_twenty_front_is_react_with_high_confidence`) auto-skip if `/tmp/twenty` is missing, so they don't block CI.
-
-### agent-onboarding source repo
-
-Cloned at `/tmp/agent-onboarding` on branch `autoplay`. This is the source of the ports we did. The 6 fixture apps used by `tests/test_framework.py` live at `/tmp/agent-onboarding/tests/fixtures/{react,nextjs,vue,sveltekit,angular,odoo}-app`. If missing, re-clone from the internal GitLab: `git clone git@gitlab.leyton.fr:masri/agent-onboarding.git /tmp/agent-onboarding && cd /tmp/agent-onboarding && git checkout autoplay`.
+- **Twenty CRM** — cloned at `/home/edouard-gouilliard/.superset/worktrees/easy-builder/rls-enforcement-plan-implementation/` (from the work-tree referenced in the last e2e verification). If missing: `git clone --depth 1 https://github.com/twentyhq/twenty.git /tmp/twenty`.
+- **Synthetic test fixtures** live in `tests/` — `conftest.py` helpers + `tmp_path` scaffolding per test.
 
 ---
 
 ## Running things
 
-### Reindex Twenty (from scratch — wipes the graph)
+### Scaffold a new repo (the main onboarding entry point)
+
+```bash
+pipx install --force '/path/to/codegraph/dist/cognitx_codegraph-0.2.0-py3-none-any.whl[python]'
+cd /path/to/any-repo
+codegraph init              # interactive
+codegraph init --yes        # accept all defaults (scaffold + docker + first index)
+codegraph init --yes --skip-docker --skip-index   # files-only dry run
+```
+
+After PyPI publish: replace the `pipx install` with `pipx install cognitx-codegraph`.
+
+### Re-index Twenty (from scratch — wipes the graph)
 
 ```bash
 cd codegraph
-.venv/bin/codegraph index /tmp/twenty -p packages/twenty-server -p packages/twenty-front
+.venv/bin/codegraph index /path/to/twenty -p packages/twenty-server -p packages/twenty-front
 ```
 
-Takes ~30s parse + ~65s resolve on this machine. Reports stats at the end. Default `--wipe` is on; pass `--no-wipe` if you want incremental (currently a no-op — everything re-merges over the top, no stale cleanup).
+Takes ~30s parse + ~100s resolve + ~50s load on this machine. Reports stats at the end.
 
-### Query the graph directly
+### Re-index the codegraph repo itself (dogfood)
+
+The `/graph-refresh` slash command does this — re-runs `codegraph index` against `codegraph/codegraph/` + `codegraph/tests/` with `--no-wipe --skip-ownership`.
+
+### Query the graph
 
 ```bash
 .venv/bin/codegraph query "MATCH (p:Package) RETURN p.name, p.framework, p.confidence"
 .venv/bin/codegraph query --json "MATCH (c:Class {is_controller:true}) RETURN c.name LIMIT 5"
 ```
 
-### Run the MCP server standalone (for JSON-RPC smoke tests)
+### Run the architecture-conformance gate locally
+
+```bash
+.venv/bin/codegraph arch-check                 # Rich table output, exits 0/1
+.venv/bin/codegraph arch-check --json > arch-report.json
+.venv/bin/codegraph arch-check --config ./my-policies.toml --repo /path/to/repo
+```
+
+### Run the MCP server standalone (JSON-RPC smoke test)
 
 ```bash
 printf '%s\n' \
@@ -175,15 +169,13 @@ printf '%s\n' \
   | timeout 10 .venv/bin/codegraph-mcp
 ```
 
-For `tools/call`, build a fresh stdin each time (FastMCP handles one init + many calls per session fine, but multi-call + tool-call + complex queries can take >10s; bump the timeout on slower machines).
-
 ### Run tests
 
 ```bash
 cd codegraph
-.venv/bin/python -m pytest tests/ -q          # full suite, ~10s
-.venv/bin/python -m pytest tests/test_mcp.py -v  # just mcp
-python3 -m pytest tests/ -q                    # system python works too if pytest is installed globally
+.venv/bin/python -m pytest tests/ -q              # full suite, ~12 s
+.venv/bin/python -m pytest tests/ -q -m slow      # include Docker integration
+.venv/bin/python -m pytest tests/test_mcp.py -v   # single module
 ```
 
 ### Wire the MCP server into Claude Code
@@ -194,7 +186,7 @@ Add to `~/.claude.json`:
 {
   "mcpServers": {
     "codegraph": {
-      "command": "/full/path/to/codegraph/.venv/bin/codegraph-mcp",
+      "command": "codegraph-mcp",
       "type": "stdio",
       "env": {
         "CODEGRAPH_NEO4J_URI":  "bolt://localhost:7688",
@@ -206,137 +198,142 @@ Add to `~/.claude.json`:
 }
 ```
 
-Restart Claude Code. The 10 codegraph tools should appear in the `/mcp` menu. **Not yet verified against a live Claude Code client** — only smoke-tested via the raw JSON-RPC pipe.
+(Assumes `pipx install cognitx-codegraph[mcp]` — the `codegraph-mcp` command lives on PATH.)
 
 ---
 
 ## What's next (ranked)
 
-The ranking assumes the same pattern the session has been using: `plan → implement → e2e validate → review loop → push`. Each tier item has enough detail to `/plan` it without re-exploring.
+The ranking assumes the same `plan → implement → e2e validate → commit` cycle this project uses. Each item has enough detail to `/plan` it from cold.
 
-### Tier A — cheap, high-leverage (pick one)
+### Tier A — operational (must-do before the v0.2.0 story is complete)
 
-#### A1. MCP resources / prompts — `queries.md` as named prompt templates
+#### A1. Push `dev` + merge PR #8 + publish to PyPI
 
-**What:** Expose the queries in `codegraph/queries.md` as `@mcp.prompt()` templates. An agent calls `prompts/get` with a name like `"blast_radius"` and gets back a structured prompt the LLM can use to drive the next tool call, instead of having to hand-write Cypher via `query_graph`.
+**What:** `git push origin dev`, bring PR #8 up to date, merge it, register `cognitx-codegraph` on pypi.org with Trusted Publisher config, push `v0.2.0` tag to trigger `release.yml`.
 
-**Why:** Natural companion to the 10 tools we just shipped. Converts the "examples" documentation into machine-consumable templates. No schema changes, no loader changes, no new dependencies.
+**Why:** Everything is built and verified. Only thing left is the one-time ops setup. Until this happens, "easiest possible onboarding" is blocked on users building the wheel locally.
 
-**Scope:** ~150 LOC.
-- Parse `queries.md` → extract each `## N. Title` section + its Cypher fenced block.
-- Register each as a `@mcp.prompt(name="...", description="...")` returning a `PromptMessage` list that includes the Cypher + an explanation of what it does.
-- Alternatively: hard-code a curated subset of 5-8 prompts in `mcp.py` rather than parsing `queries.md` (more maintainable but drifts from docs).
-- Tests: monkeypatch the FastMCP prompt registry, assert the registered prompts have the expected names.
-- README: one new subsection under "Exposing the graph to Claude via MCP".
+**Scope:** ~30 min operational.
+- `git push origin dev` — 5 unpushed commits land.
+- PR #8 is already open; rebase or merge depending on how stale it is.
+- PyPI: create the `cognitx-codegraph` project on pypi.org. Go to Project → Publishing → add Trusted Publisher with owner `cognitx-leyton`, repo `graphrag-code`, workflow `release.yml`, environment `release`.
+- GitHub: Settings → Environments → create a `release` environment (required for Trusted Publishers to accept the OIDC token).
+- `git tag v0.2.0 && git push origin v0.2.0` — `release.yml` auto-builds + publishes.
+- Verify: fresh machine, `pipx install cognitx-codegraph` works.
 
-**Gotchas:** FastMCP's prompt API is separate from the tool API and uses a different decorator signature. The existing test fake (`FakeDriver`) doesn't need changes; prompts don't touch Neo4j. `mcp.server.fastmcp.FastMCP.list_prompts()` is the sister to `list_tools()`.
+**Gotchas:** If the PyPI project name `cognitx-codegraph` is also taken by the time you try (unlikely), rename in `pyproject.toml` and bump to 0.2.1.
 
-**Delivers:** Completes the "expose the graph to agents" story on the MCP side. Nothing else is missing at the retrieval layer.
+**Delivers:** The "easiest possible" quickstart is truly live. `README.md` quickstart ships working.
 
-#### A2. GitHub Actions CI workflow
+#### A2. Live Claude Code client verification of the 10 MCP tools
 
-**What:** `.github/workflows/test.yml` that runs pytest on push and PR.
+**What:** Install `cognitx-codegraph[mcp]` on a real machine, add the `mcpServers` block to `~/.claude.json`, restart Claude Code, confirm the 10 tools appear in `/mcp`.
 
-**Why:** No CI yet. Cheap (~30 LOC YAML). Worth doing before the repo sees contributors or before we open the PR for the 6 session commits.
+**Why:** We've smoke-tested via raw JSON-RPC but never verified the UI. Low risk, high confidence gain.
 
-**Scope:** ~30 LOC YAML.
-- Python 3.10, 3.11, 3.12 matrix.
-- Install `requirements.txt` + `mcp` + `pytest`.
-- Run `python -m compileall -q codegraph` + `python -m pytest tests/`.
-- Skip Neo4j-requiring tests automatically (none currently require it; all are mocked).
-- The two Twenty integration tests in `test_framework.py` auto-skip because `/tmp/twenty` doesn't exist in CI — no extra guarding needed.
+**Scope:** 15 min of manual verification.
 
-**Gotchas:** None. This is pure infra.
+### Tier B — feature work, ranked
 
-**Delivers:** Safety net before the PR lands.
+#### B1. Python Stage 2 — framework detection + endpoints
 
-### Tier B — meaningful, moderate effort
+**What:** Extend `py_parser.py` to recognise FastAPI / Flask / Django conventions. Emit `:Endpoint`, `:Controller`, `INJECTS`, `DECORATED_BY`-as-routing signals, like the TS Stage 2 does for NestJS.
 
-#### B1. Incremental re-indexing — `codegraph index --since HEAD~N`
+**Why:** Today `/trace-endpoint` returns zero rows against Python repos. The whole CI gate + graph query surface assumes framework-construct awareness. Python parity unlocks Django / FastAPI / Flask users.
 
-**What:** Diff git, re-parse only touched files, upsert into the existing graph (no wipe).
+**Scope:** ~600 LOC across `py_parser.py` + `framework.py` + new tests.
+- Detect FastAPI: `@app.get` / `@router.post` decorator → `:Endpoint` with method + path.
+- Detect Flask: `@app.route('/users', methods=['GET'])` → `:Endpoint`.
+- Detect Django: `urls.py` path matching + `class ViewName(View)` + `path('/users/', UserView.as_view())`.
+- Detect SQLAlchemy: `class User(Base)` with `Column` fields → `:Entity` + `:Column` nodes.
+- Detect `@pytest.fixture` (already caught by DECORATED_BY but could flag).
+- Per-package `FrameworkType.FASTAPI` / `FLASK` / `DJANGO` entries in `framework.py` with scored heuristics.
 
-**Why:** Today `codegraph index` wipes and rebuilds. For agent workflows where Claude Code edits files in a long session, you can't keep the graph current without a ~95s rebuild. Incremental closes that loop. Listed on the README roadmap as "Incremental re-indexing on file changes".
+**Gotchas:** Django's URL routing is a data structure, not decorators — needs AST walk of `urls.py`. FastAPI's route decorators can be applied via `@router.get` where `router = APIRouter()` — need to follow the variable's class back to know it's a route.
 
-**Scope:** ~400 LOC. Touches:
-- `codegraph/cli.py` — new `--since <ref>` / `--since-files <file1,file2>` flags. Mutually exclusive with the default "index everything" mode.
-- `codegraph/loader.py` — new semantics: don't wipe, delete-then-merge per file, handle orphan node cleanup for files that were deleted since the last run.
-- `codegraph/parser.py` — unchanged (parser is stateless).
-- `codegraph/resolver.py` — tricky. Cross-file resolution is a global pass. Two options:
-  - (a) Reparse only changed files + run `link_cross_file` over the full index each time (slower but safe).
-  - (b) Re-run `link_cross_file` only for edges touching changed files (faster but has cascade cases).
-  - **Recommend (a) for v1**, add (b) as a follow-up if perf is a real problem.
-- `codegraph/tests/test_incremental.py` — new file. Create a small fake repo in `tmp_path`, index it, modify one file, re-index with `--since`, assert the graph matches a full re-index of the new state.
+**Delivers:** Makes codegraph genuinely multi-language. `codegraph init` already handles Python-only repos; this makes the resulting graph rich.
 
-**Gotchas:**
-- **Stale edges.** If an old file had `IMPORTS` edges that no longer exist, the new parse will emit fewer edges but the old ones will still be in Neo4j. Need to delete all edges originating from `:File {path:$p}` before re-inserting.
-- **Orphan nodes.** Functions / Classes inside a now-deleted file need cleanup too. Or accept that they'll be orphaned — Cypher queries filter by `:File` membership typically, so orphans may be harmless.
-- **Git detection.** `--since HEAD~5` implies a git repo; add an error for non-git paths or fall back to "just reindex everything".
+#### B2. MCP resources / prompts — `queries.md` as named prompt templates
 
-**Delivers:** The final roadmap item for "make the graph stay fresh". Unlocks **Tier B2** (MCP write tools) because it provides the upsert primitive.
+**What:** Expose the queries in `codegraph/queries.md` as `@mcp.prompt()` templates. Agent calls `prompts/get` with a name and gets a structured prompt including the Cypher + context.
 
-#### B2. MCP write tools behind `--allow-write`
+**Why:** Natural companion to the 10 tools. No schema or loader changes. `queries.md` was written as documentation; promoting it to machine-consumable templates is a small polish.
 
-**What:** Add `reindex_file(path)` and `wipe_graph()` tools to `codegraph-mcp`, gated by a `--allow-write` flag on the server.
+**Scope:** ~150 LOC + tests. Parse `queries.md` headings and fenced blocks, register with FastMCP prompt API.
 
-**Why:** Lets Claude Code refresh the graph after editing without shelling out. Currently the agent has to drop to Bash, run `codegraph index`, and wait 95s.
+#### B3. Incremental re-indexing (`codegraph index --since HEAD~N`)
 
-**Scope:** ~100 LOC after B1 lands.
-- New CLI flag `codegraph-mcp --allow-write` (passed via the `args` field in `~/.claude.json` `mcpServers` block).
-- Sessions are still `READ_ACCESS` for the existing 10 tools; the new tools open a separate `WRITE_ACCESS` session.
-- `reindex_file(path)` calls the same internals as `codegraph index --since-files <path>`.
-- `wipe_graph()` requires a confirmation parameter or just a strong warning in the docstring.
-- Tests: monkeypatched driver + assert `WRITE_ACCESS` was requested for the write tools only.
+**What:** Diff git, re-parse only touched files, upsert into the existing graph without wiping.
 
-**Blocked by:** B1 (incremental re-indexing).
+**Why:** Full re-index of Twenty takes ~3 min. For agent workflows where code changes mid-session, that's too slow to close the loop.
 
-#### B3. Investigate the 29% unresolved imports
+**Scope:** ~400 LOC. Touches `cli.py` (new flag), `loader.py` (upsert semantics, orphan cleanup), `resolver.py` (re-run `link_cross_file` over full index — option (a) from previous plans).
 
-**What:** Twenty indexing logged `imports: total=77417 resolved=54823 unresolved=22594 (70.8% resolved)`. 22594 unresolved is a lot. Some are legit external npm packages (fine — `:External` nodes), but some fraction are definitely TS path aliases or barrel re-exports that the resolver gave up on.
+**Blocked by**: nothing. Unlocks **B4 (MCP write tools behind `--allow-write`)**.
+
+#### B4. MCP write tools behind `--allow-write`
+
+**What:** `reindex_file(path)` + `wipe_graph()` tools, gated by a `--allow-write` CLI flag on `codegraph-mcp`.
+
+**Why:** Agents can refresh the graph after editing without shelling out for 3 min.
+
+**Scope:** ~100 LOC after B3 lands. Separate `WRITE_ACCESS` session for these tools only.
+
+#### B5. Agent-native RAG — graph-selected context injection
+
+**What:** Claude Code hook / extension that, when the user mentions a symbol, queries the graph for its 1-hop neighbours and injects a tight brief (maybe 2k tokens) instead of letting the model grep/read raw files.
+
+**Why:** The biggest potential unlock. Turns codegraph from "cool query tool" into "core context pipeline for every AI dev session." Novel enough to open-source as its own thing.
+
+**Scope:** ~1 week of focused work. Needs a Claude Code extension surface (hook? plugin?) to inject context before tool calls. Likely prototyped as a separate repo first.
+
+**Gotchas:** Tight coupling to Claude Code's extension API — may require using the official `@anthropic-ai/claude-code` SDK rather than MCP.
+
+#### B6. Investigate the 29% unresolved imports
+
+**What:** Twenty indexing resolves 70.8% of imports (54,820 / 77,389). Investigate what the 22,569 unresolved are.
 
 **Why:** Edges we're dropping on the floor reduce the value of the graph for every downstream query.
 
-**Scope:** Investigation first, then fix. Needs:
-- Dump a sample of unresolved import specifiers: `MATCH (f:File)-[r:IMPORTS_EXTERNAL]->(e:External) RETURN e.specifier, count(f) AS n ORDER BY n DESC LIMIT 50`.
-- Categorize: (a) real externals like `react`, `lodash` — keep. (b) tsconfig path aliases like `@/components/...` — resolver should have handled these. (c) barrel re-exports like `../../shared` → `shared/index.ts` — may be falling through.
-- Read `codegraph/resolver.py` to understand which step gives up and why.
-- Likely fix: beef up the alias resolution + barrel-export handling in `resolver.py`.
+**Scope:** Investigation first. Query: `MATCH (f:File)-[r:IMPORTS_EXTERNAL]->(e:External) RETURN e.specifier, count(f) AS n ORDER BY n DESC LIMIT 50`. Categorize: legit externals (keep), tsconfig path aliases (resolver bug), barrel re-exports (resolver bug). Likely fix is beefing up alias + barrel handling in `resolver.py`.
 
-**Needs investigation before planning.** Don't write a plan from cold.
+### Tier C — more arch-check policies
 
-### Tier C — defer
+Custom Cypher policies are already supported via `[[policies.custom]]` in `.arch-policies.toml`. Worth shipping a few more **built-ins** for common needs:
 
-#### C1. `relationship_mapper` port (low value)
+- **Coupling ceiling** — any file with >N distinct IMPORTS edges is flagged.
+- **Orphan detection** — functions/classes/endpoints with zero inbound references AND no framework-entry-point decorator. Already possible via the existing `/dead-code` slash command; promoting to a policy means it blocks merges.
+- **Endpoint auth coverage** — every `:Endpoint` with `method IN ('POST','PUT','PATCH','DELETE')` must have a DECORATED_BY to an auth-guard. Requires knowing which decorators count as auth — configurable.
+- **Public-API stability** — breaking changes to exported symbols detected by diffing graph state between commits (needs graph persistence beyond CI).
 
-`RENDERS` and `RENDERS_COMPONENT` edges are already in the schema. The only net-adds from agent-onboarding's `relationship_mapper.py` would be `NAVIGATES_TO` (route → route) and `SHARES_STATE` (components using same hooks/stores). Both are fuzzy heuristics with low confidence. Not worth it until MCP usage reveals a specific need.
+**Scope:** ~50 LOC per built-in + tests. Mostly a question of priority — each one is cheap.
 
-#### C2. Python / Go parser frontends
+### Tier D — defer (still)
 
-Big tree-sitter work. Not the bottleneck. Current codebase is TypeScript-focused and that's fine.
-
-#### C3. `knowledge_enricher` LLM-powered semantic pass
-
-The biggest bet from the agent-onboarding analysis. Adds LLM-generated semantic edges (cross-file feature clustering, element → feature binding, etc.) on top of the structural graph. Worth revisiting once real-world MCP usage surfaces questions worth enriching. Defer until agents are actually asking questions the structural graph can't answer.
-
-#### C4. Rich per-query provenance in MCP responses
-
-Attaching file paths and line ranges to every returned row would help LLM grounding. Separate concern; defer until someone asks.
+- **`relationship_mapper` port** — `RENDERS` is already there; `NAVIGATES_TO` / `SHARES_STATE` are fuzzy heuristics. Not worth it until MCP usage reveals a specific need.
+- **Go parser frontend** — big tree-sitter work, not the bottleneck.
+- **`knowledge_enricher` LLM-powered semantic pass** — biggest bet from the agent-onboarding analysis. Revisit once real-world MCP usage surfaces questions worth enriching.
+- **Web UI / dashboard** — Neo4j Browser at `:7475` is the interactive surface.
+- **Real-time file watching** — incremental re-index on demand is enough; no watchers.
 
 ---
 
 ## Known open questions
 
-1. **Does the live Claude Code client actually show the 10 codegraph tools?** Only verified via raw JSON-RPC pipe this session. Need to add the `mcpServers` block to `~/.claude.json`, restart Claude Code, and confirm `/mcp` lists codegraph. Low risk but unverified.
+1. **Live Claude Code client verification** (A2 above) — still unverified against a running Claude Code UI. Only smoke-tested via raw JSON-RPC pipe.
 
-2. **Unresolved imports percentage** (see B3). 29% is suspicious; investigation before a fix.
+2. **Unresolved imports percentage** (B6) — 29% is high; investigation before fix.
 
-3. **`find_class` case sensitivity** — we kept it case-sensitive so the `class_name` index is usable. If agents consistently miss the case, we may need a `name_lower` property and a matching index. Revisit if user reports come in.
+3. **Python Stage 2 priority vs. arch-check policy expansion vs. incremental re-indexing** — all three are valuable. B1 (Python frameworks) unlocks the most new users. B3 (incremental re-index) closes the dev-loop gap. More arch-check policies directly improve the CI gate. No clear answer without user input.
 
-4. **`gql_operation_callers` name uniqueness** — Twenty has 428 GraphQL operations. Some names may exist across query/mutation/subscription types. The `op_type` parameter narrows it, but the default (None) returns all matches. Is that the right default? For now yes — the agent can filter client-side.
+4. **Init's first-index timeout on huge repos** — `codegraph init --yes` runs the first index synchronously. Twenty's 3-minute index is fine; a 20k+ file repo (e.g. Babel, TypeScript compiler, monorepo-of-monorepos) would time out the user's patience. Should init have a `--skip-index` nudge for giant repos, or detect and prompt? Currently the user can pass `--skip-index` manually.
 
-5. **Incremental indexing edge semantics** (see B1). Stale edge cleanup is the hardest piece. Full-delete-and-reinsert is safe but can cascade. A per-file edge TTL or versioning would be cleaner but much more work.
+5. **Container-name uniqueness in `docker-compose.yml`** — init derives the container name from the repo dir basename. If a user has two worktrees with the same basename, the second `init` will collide on the container name. Low-severity; fix by appending a short hash of the repo path.
 
-6. **Who is the canonical maintainer of `.codegraphignore`?** The file is hand-written by users. Do we want a `codegraph ignore init` command that scaffolds a sensible default? Not shipped this session, deliberately out of scope for the ignore commit.
+6. **`.arch-policies.toml` schema versioning** — no version field today. If we evolve the schema, old repos silently misbehave. Consider adding `[meta] schema_version = 1` and erroring on unknown versions.
+
+7. **Twenty's 184,809 import cycles** — surfaced by the e2e run. Are these real architectural problems or an artefact of the cycle detection (e.g. barrel files counting twice)? Needs a quick sample-and-validate. If the heuristic is over-reporting, cap the cycle length or dedupe by node set.
 
 ---
 
@@ -344,115 +341,131 @@ Attaching file paths and line ranges to every returned row would help LLM ground
 
 These have worked well and are worth continuing:
 
-1. **`/plan` before every non-trivial implementation.** Write the plan to `~/.claude/plans/<name>.md`. Include: Context (why), Critical files, Design decisions with rejected alternatives, Tests, Verification, explicit Non-goals. Get user sign-off before coding.
+1. **`/plan_local` before non-trivial implementation.** Writes to `~/.claude/plans/` or repo-local `.claude/plans/`. Get user sign-off before coding. The plan is a contract against which the work gets verified.
 
-2. **Atomic commits with detailed messages.** Every commit is scoped to one conceptual change. Commit messages are ~30-50 lines with an overview, a per-file rationale, and a verification note. See `git log --format=fuller` for the established style.
+2. **Atomic commits with detailed bodies.** Every commit is scoped to one conceptual change. See `git log --format=fuller` for the established style.
 
-3. **E2E test on Twenty after every feature.** Run `codegraph index /tmp/twenty -p packages/twenty-server -p packages/twenty-front` and check `:Package` / MCP tool responses against a real monorepo. This is how we caught the framework detector's NestJS / workspace / lockfile bugs.
+3. **E2E validation on a real fixture after every feature.** Run `codegraph index` + the new feature against Twenty or the codegraph repo itself. This is how we caught the src-layout Python detection bug in `c6da6c6`, and the loader's function-DECORATED_BY drop earlier.
 
-4. **Run `feature-dev:code-reviewer` after shipping.** Loop until clean. Round 1 usually finds 2-5 issues, round 2 usually finds 1-2, round 3 is usually clean. The scope prompt in this session's review calls was deliberately tight (per-commit) — agents get confused if you hand them the whole repo.
+4. **Dogfood slash commands during development.** `/graph`, `/graph-refresh`, `/blast-radius`, `/arch-check` — use them on codegraph's own code. Every time something's confusing or wrong, there's likely a real bug.
 
-5. **Limits in Cypher.** Neo4j 5.x **does not accept `LIMIT $param`** as a bind parameter. Validate the integer via `_validate_limit` and **interpolate** into the Cypher string. This is the same pattern `callers_of_class.max_depth` uses. Every new MCP tool with a limit should follow suit.
+5. **Limits in Cypher are interpolated, not parameterised.** Neo4j 5.x rejects `LIMIT $param`. Validate via `_validate_limit` then interpolate. Established pattern in every MCP tool.
 
-6. **Test fakes pin the pattern.** The `_FakeDriver` / `_FakeSession` / `_FakeRecord` trio in `test_mcp.py` is how we test Neo4j-dependent code without Neo4j. It's deliberately minimal — if you find yourself extending it significantly, consider whether you're testing the wrong layer.
+6. **`_FakeDriver` / `_FakeSession` / `_FakeResult` pattern** for testing Neo4j-dependent code without Neo4j. Extend minimally; if a test needs something significantly different, you're probably testing the wrong layer.
 
-7. **Never commit the `.claude/` directory.** It's intentionally untracked (agent config, per-session). Leave it out of `git add`.
+7. **Never commit user-local `.claude/` files.** The 7 shipped slash commands are committed (project-shared). User-local scratch commands stay untracked.
+
+8. **`codegraph-neo4j` (dev) is on port 7688/7475.** Any `docker compose up` scaffolded by `codegraph init` exposes on 7687/7474 by default — don't confuse the two graphs.
 
 ---
 
 ## Plan archive — what's been written
 
-Plans live in `~/.claude/plans/`. Not in the repo. Relevant ones from this session:
+Repo-local plans under `.claude/plans/`:
+- `graph-slash-commands.plan.md` — shipped as `af77cd3`.
+- `arch-check-ci.plan.md` — shipped as `55789fd` + `b12520a`.
+- `glimmering-painting-yao.md` (in `~/.claude/plans/`) — the most recent "one-command onboarding" plan, shipped as `d0abe53`.
 
-- `sunny-giggling-moon.md` — **this file gets overwritten each plan mode session.** Currently contains the "extend MCP tool surface with 5 retrievers" plan that shipped as `7588522`. Previously contained the ignore filter plan (b71bc45), then the MCP server plan (c198c5d), then the framework-detector fix plan (e7382f7), then this one. Each new `/plan` overwrites the previous.
-- `framework-detector-port.md` — the framework detection port plan that shipped as `9fb4d1d`. Not overwritten.
-
-**Next agent caveat:** if you're about to `/plan` something, be aware that the harness may dump its output into `sunny-giggling-moon.md` and overwrite whatever was there. Read the file before starting a plan mode session if you want to preserve the prior plan — copy it elsewhere first.
+Older plans (not in repo): `sunny-giggling-moon.md` (the MCP retriever batch), `framework-detector-port.md`. These live in `~/.claude/plans/` and get overwritten on each `/plan` session unless preserved manually.
 
 ---
 
 ## Non-goals (keep these out of scope unless user asks)
 
-- **Make `codegraph` work on non-TypeScript codebases.** It's TS-focused by design.
-- **Web UI or dashboard.** Neo4j Browser at `:7475` is the interactive surface; everything else is Cypher + MCP.
-- **Real-time file watching.** Incremental re-index on demand is enough; no watchers.
-- **Auth / TLS / rate-limiting on MCP.** Stdio-only, trusts the local Claude Code process spawning it.
-- **Exposing internal state via `query_graph` helper methods** — the escape hatch is `query_graph(raw_cypher)` and that's by design.
+- ~~**Make `codegraph` work on non-TypeScript codebases.**~~ **Obsolete** — Python Stage 1 shipped. Python Stage 2 (framework detection) is tier B.
+- **Web UI or dashboard.** Neo4j Browser + Claude Code slash commands are the interactive surfaces.
+- **Real-time file watching.** Incremental re-index on demand is enough (B3); no watchers.
+- **Auth / TLS / rate-limiting on MCP.** Stdio-only, trusts the local Claude Code process.
+- **Exposing internal state via `query_graph` helpers** — `query_graph(raw_cypher)` is the escape hatch by design.
 - **Database migrations between codegraph schema versions.** Users wipe and re-index when upgrading.
-- **Windows support.** Not tested; not a goal.
-- **Replacing the existing `is_controller` / `is_component` / etc. per-file flags.** They stay alongside the new `:Package` node as within-package resolution.
-- **More than 10 MCP tools in a batch.** If tool surface grows further, add tools incrementally in small batches so each gets a proper review loop.
-- **Porting more from `agent-onboarding/`.** Only the three pieces we shipped (ignore filter, framework detector, relationship-mapper-skipped) made sense. The rest (`knowledge_enricher`, `selector_extractor`, `deep_selector_agent`, `style_extractor`, `page_scanner`, `smart_explorer`) are browser/UI-specific and don't fit codegraph's value prop.
+- **Windows support.** Untested; not a goal.
+- **Indexing `node_modules`** — skipped via `.codegraphignore` defaults.
+- **Replacing per-file flags (`is_controller`, `is_component`, ...) with everything on `:Package`.** Both coexist; the flags are within-package resolution.
+- **More than 10 MCP tools in a single batch.** Add incrementally so each gets a proper review loop.
 
 ---
 
 ## How to continue in a fresh agent session
 
-Starter prompt template for the next agent:
+Starter prompt for the next agent:
 
 ```
-I'm continuing work on codegraph, a Python tool that indexes TypeScript
-monorepos into Neo4j. Read ROADMAP.md at the repo root for the full
-context of what shipped in the previous session and what's next.
+I'm continuing work on codegraph. Read ROADMAP.md for full context.
 
-Current working directory: /home/edouard-gouilliard/Obsidian/SecondBrain/Personal/projects/graphrag-code
+Working directory: /home/edouard-gouilliard/Obsidian/SecondBrain/Personal/projects/graphrag-code
 
 Before doing anything:
-1. `git status` and `git log --oneline -10` to confirm repo state.
-2. Check that .venv exists in codegraph/ — if not, rebuild per ROADMAP.md.
-3. Verify Neo4j is up: `docker ps | grep codegraph-neo4j`.
-4. Run the test suite as a smoke check: `cd codegraph && .venv/bin/python -m pytest tests/ -q`.
+1. `git status && git log --oneline -10` to confirm repo state.
+2. Check .venv exists in codegraph/ — if not, rebuild per ROADMAP.
+3. `docker ps | grep codegraph-neo4j` — dev Neo4j should be up on 7688.
+4. Run tests as a smoke check: `cd codegraph && .venv/bin/python -m pytest tests/ -q`.
 
-Then pick up at the "What's next" section of ROADMAP.md. My picks for
-next step, in order: A1 (MCP prompts), A2 (CI workflow), B1 (incremental
-re-indexing). Propose one, /plan it, then implement.
+Then pick up at the "What's next" section. Unless the user says otherwise,
+my priority order is: Tier A (push + PyPI publish + Claude Code
+verification) → B1 (Python Stage 2) → B3 (incremental re-indexing).
 
-Do not push to origin without asking. Do not open a PR without asking.
+Do not push to origin without asking. Do not publish to PyPI without
+asking. Do not merge the open PR #8 without asking.
 ```
 
 ---
 
 ## Appendix — quick reference of what's where
 
-### Key source files (all under `codegraph/codegraph/`)
+### Key source files (all under `codegraph/codegraph/` unless noted)
 
-| File | Purpose | LOC |
+| File | Purpose | Approximate LOC |
 |---|---|---|
-| `cli.py` | Typer CLI: `index`, `query`, `validate`, `wipe`, REPL | ~490 |
+| `cli.py` | Typer CLI: `init`, `repl`, `index`, `validate`, `arch-check`, `query`, `wipe` | ~570 |
+| `init.py` | `codegraph init` scaffolder (detection + prompts + template render + docker + first index) | ~310 |
 | `parser.py` | tree-sitter TS/TSX walker with framework-construct detection | ~1160 |
-| `resolver.py` | Cross-file reference resolution, `link_cross_file`, `Index` aggregator | ~550 |
-| `loader.py` | Neo4j batch writer, constraints, indexes, `LoadStats` | ~830 |
-| `schema.py` | Node + edge dataclasses shared across parser → loader | ~370 |
+| `py_parser.py` | tree-sitter Python walker (Stage 1: classes, methods, functions, imports, decorators, CALLS, docstrings, params, return types) | ~560 |
+| `resolver.py` | Cross-file reference resolution (TS path aliases + Python module imports + class heritage + method calls + super()) | ~660 |
+| `loader.py` | Neo4j batch writer, constraints, indexes, `LoadStats` | ~815 |
+| `schema.py` | Node + edge dataclasses shared across parser → loader (+ shared test-pairing constants) | ~390 |
 | `config.py` | `codegraph.toml` / `pyproject.toml` config loader | ~190 |
-| `ignore.py` | `.codegraphignore` parser + `IgnoreFilter` class | ~180 |
+| `arch_check.py` | Architecture-conformance runner + 3 built-in policies + custom policy support | ~290 |
+| `arch_config.py` | `.arch-policies.toml` parser → typed `ArchConfig` | ~275 |
+| `ignore.py` | `.codegraphignore` parser + `IgnoreFilter` | ~180 |
 | `framework.py` | Per-package framework detection (`FrameworkDetector`) | ~510 |
 | `mcp.py` | FastMCP stdio server with 10 tools | ~410 |
 | `ownership.py` | Git log → author mapping onto graph nodes | ~130 |
 | `validate.py` | Post-load sanity-check suite | ~400 |
 | `repl.py` | Interactive Cypher REPL | ~320 |
-| `utils/neo4j_json.py` | Shared `clean_row` helper used by cli + mcp | ~30 |
+| `utils/neo4j_json.py` | Shared `clean_row` helper | ~30 |
+| `utils/repl_skin.py` | REPL formatting helpers | ~500 |
+| `templates/**/*` | 11 files scaffolded by `codegraph init` | ~300 (markdown + YAML + TOML) |
 
-### Tests
+### Tests (`codegraph/tests/`)
 
 | File | Count | Target |
 |---|---|---|
-| `tests/test_ignore.py` | 19 | `ignore.py` + `cli._strip_ignored_components` + `cli._load_ignore_filter` |
-| `tests/test_framework.py` | 23 | `framework.py` (14 existing + 9 from `fix(framework)`, including 2 opt-in Twenty tests) |
-| `tests/test_mcp.py` | 61 | `mcp.py` (20 original + 41 from the retriever batch) |
-| **Total** | **103** | |
+| `test_ignore.py` | 19 | `ignore.py` + cli helpers |
+| `test_framework.py` | 23 | `framework.py` |
+| `test_mcp.py` | 61 | `mcp.py` (10 tools) |
+| `test_py_parser.py` | ~30 | `py_parser.py` (Stage 1 parsing) |
+| `test_py_parser_calls.py` | 12 | Method-body CALLS emission |
+| `test_py_resolver.py` | ~15 | Python import resolution + CALLS wiring + super() |
+| `test_loader_partitioning.py` | 3 | Function DECORATED_BY routing |
+| `test_loader_pairing.py` | 6 | TS + Python test-file pairing |
+| `test_arch_check.py` | 16 | Policies + orchestrator + custom policy runner |
+| `test_arch_config.py` | 20 | `.arch-policies.toml` parser (built-ins + custom + validation errors) |
+| `test_init.py` | 17 | Scaffolder helpers (detection, prompts, render, write) |
+| `test_init_integration.py` | 2 (1 slow) | End-to-end scaffold + optional Docker |
+| **Total** | **223** | |
 
-### Key decisions recorded in commit messages (not README)
+### Key decisions recorded in commit messages
 
-Grep the session's commits for these topics:
-
-- Why `.codegraphignore` not `.agentignore` → `b71bc45` body
-- Why `is_component = False` rather than deleting `FunctionNode` → `b71bc45` body
-- Why `:Package` as flat properties rather than `:Package-[:USES]->:Framework` → `9fb4d1d` plan (`framework-detector-port.md`)
-- Why NestJS indicator weights outrank React → `e7382f7` body
-- Why the `workspaces` field guard on workspace-root package.json → `e7382f7` body
-- Why the driver is lazy and not eager → `39be5c2` body
-- Why `_FakeSession.run` unconditionally pops → `39be5c2` body
-- Why `LIMIT` is interpolated not parameterised → `7588522` body and commit messages of earlier MCP tools
+Grep commit bodies for rationale:
+- Why `.codegraphignore` not `.agentignore` → `b71bc45`
+- Why `:Package` as flat properties rather than `:Package-[:USES]->:Framework` → `9fb4d1d`
+- Why NestJS indicator weights outrank React → `e7382f7`
+- Why the driver is lazy and not eager → `39be5c2`
+- Why `LIMIT` is interpolated not parameterised → `7588522`
+- Why Python CALLS reuse the TS `"this"` / `"this.field"` / `"name"` vocabulary → `d48ee26`
+- Why function-level DECORATED_BY routing was missing → `d48ee26`
+- Why `pyproject.toml` / `setup.py` / `setup.cfg` are Python markers → `c6da6c6`
+- Why `cognitx-codegraph` as the PyPI name → `d0abe53`
 
 ### Git remotes
 
@@ -460,4 +473,4 @@ Grep the session's commits for these topics:
 origin  git@github.com:cognitx-leyton/graphrag-code.git
 ```
 
-Protected branches are `main`, `release`, `hotfix`. `dev` is the working branch. All PRs go into `main` via the dev → main flow.
+Protected branches: `main`, `release`, `hotfix`. `dev` is the working branch. PRs go into `main` via the `dev → main` flow. PR #8 is currently open.

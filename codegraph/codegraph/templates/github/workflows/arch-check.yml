@@ -1,0 +1,82 @@
+# Architecture-conformance gate.
+#
+# Spins up a throwaway Neo4j, indexes the repo, runs `codegraph arch-check`,
+# and fails the job if any built-in policy reports a violation.
+#
+# SAFETY: this workflow never interpolates untrusted GitHub context (issue
+# bodies, PR titles, commit messages, etc.) into shell commands. All `run:`
+# steps use hardcoded arguments or values from `env:`.
+#
+# ─── Trigger configuration ──────────────────────────────────────────────
+# Default is PR-to-main only — drift cannot land on `main`, and developers
+# iterate freely on `dev` and feature branches. Uncomment alternatives below
+# to match your team's policy. See `CLAUDE.md` → "Architecture drift (CI gate)"
+# for context.
+
+name: arch-check
+
+on:
+  pull_request:
+    branches: [main]
+  # Uncomment to ALSO run on every push to dev — catches drift the moment
+  # it lands on the shared branch, but a red dev blocks the whole team.
+  # push:
+  #   branches: [dev]
+  # Manual runs from the Actions UI or `gh workflow run arch-check.yml
+  # --ref <branch>`. Useful for reproducing a failing check without pushing
+  # or creating a PR.
+  workflow_dispatch:
+
+jobs:
+  arch-check:
+    runs-on: ubuntu-latest
+
+    services:
+      neo4j:
+        image: neo4j:5.24-community
+        env:
+          NEO4J_AUTH: neo4j/codegraph123
+        ports:
+          - 7687:7687
+          - 7474:7474
+        options: >-
+          --health-cmd "wget -qO- http://localhost:7474 || exit 1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install codegraph
+        run: pip install "cognitx-codegraph[python]==$PIPX_VERSION"
+
+      - name: Wait for Neo4j
+        run: |
+          for i in $(seq 1 30); do
+            if nc -z localhost 7687; then echo "neo4j up"; exit 0; fi
+            sleep 2
+          done
+          echo "neo4j did not come up in time" >&2
+          exit 1
+
+      - name: Index repo
+        env:
+          CODEGRAPH_NEO4J_URI: bolt://localhost:7687
+        run: codegraph index . $PACKAGE_PATHS_FLAGS --skip-ownership
+
+      - name: Run architecture policies
+        env:
+          CODEGRAPH_NEO4J_URI: bolt://localhost:7687
+        run: codegraph arch-check --json | tee arch-report.json
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: arch-report
+          path: arch-report.json
