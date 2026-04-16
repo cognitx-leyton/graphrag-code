@@ -13,6 +13,25 @@
 
 Built at **[Leyton CognitX](https://cognitx.leyton.com/)** to make large TypeScript monorepos legible to humans, to Claude, and to LLM agents alike.
 
+## 🚀 Quickstart: use in your repo
+
+```bash
+pipx install cognitx-codegraph
+cd /path/to/your-repo
+codegraph init
+```
+
+`codegraph init` asks 4-5 short questions (which packages to index, which package boundaries to enforce, whether to install the Claude Code surface + GitHub Actions gate + local Neo4j) and then:
+
+1. Writes `.claude/commands/` (7 slash commands), `.github/workflows/arch-check.yml`, `.arch-policies.toml`, `docker-compose.yml`, and a `CLAUDE.md` snippet.
+2. Starts a local Neo4j container via `docker compose up -d`.
+3. Runs the first index.
+4. Prints what to query next.
+
+You're fully set up in ~2 minutes. Want everything without prompts? `codegraph init --yes`. Want just the files and no Docker? `codegraph init --yes --skip-docker --skip-index`.
+
+Full walkthrough: [codegraph/docs/init.md](./codegraph/docs/init.md). Policy reference: [codegraph/docs/arch-policies.md](./codegraph/docs/arch-policies.md).
+
 ## ✨ Highlights
 
 - **Framework-aware parsing** — not just imports: controllers, injectables, modules, entities, React components and hooks are first-class nodes.
@@ -322,12 +341,12 @@ Thanks to everyone who has helped shape `graphrag-code`:
 
 If `graphrag-code` helps you make sense of a TypeScript monorepo, a star helps others find it too.
 
-<a href="https://star-history.com/#cognitx-leyton/graphrag-code&Date">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=cognitx-leyton/graphrag-code&type=Date&theme=dark" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=cognitx-leyton/graphrag-code&type=Date" />
-    <img alt="Star history chart for cognitx-leyton/graphrag-code" src="https://api.star-history.com/svg?repos=cognitx-leyton/graphrag-code&type=Date" />
-  </picture>
+<a href="https://www.star-history.com/?repos=cognitx-leyton%2Fgraphrag-code&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=cognitx-leyton/graphrag-code&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=cognitx-leyton/graphrag-code&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=cognitx-leyton/graphrag-code&type=date&legend=top-left" />
+ </picture>
 </a>
 
 ## 📄 License
