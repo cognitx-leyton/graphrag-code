@@ -31,13 +31,18 @@ except ModuleNotFoundError:  # pragma: no cover
 # Hardcoded base sets — intentionally generic, not Twenty-specific.
 # Users extend these via `exclude_dirs` / `exclude_suffixes` in their config.
 BASE_EXCLUDE_DIRS: frozenset[str] = frozenset({
+    # JavaScript / TypeScript build + cache
     "node_modules", "dist", "build", ".next", ".turbo", "coverage",
     ".git", "generated", "__generated__", ".cache", ".svelte-kit",
     ".nuxt", ".output", ".parcel-cache", ".vercel",
+    # Python build + cache (used by the Python frontend from Stage 1 on)
+    "__pycache__", ".venv", "venv", ".pytest_cache", ".mypy_cache",
+    ".ruff_cache", ".tox", ".eggs", ".ipynb_checkpoints",
 })
 
 BASE_EXCLUDE_SUFFIXES: tuple[str, ...] = (
     ".stories.tsx", ".stories.ts", ".d.ts",
+    ".pyc", ".pyo",
 )
 
 

@@ -29,7 +29,13 @@ from .ignore import IgnoreConfigError, IgnoreFilter
 from .loader import Neo4jLoader
 from .ownership import collect_ownership
 from .parser import TsParser
-from .resolver import Index, Resolver, link_cross_file, load_package_config
+from .resolver import (
+    Index,
+    Resolver,
+    link_cross_file,
+    load_package_config,
+    load_python_package_config,
+)
 from .schema import PackageNode, RouteNode
 from .utils.neo4j_json import clean_row
 
@@ -46,6 +52,14 @@ DEFAULT_USER = os.environ.get("CODEGRAPH_NEO4J_USER", "neo4j")
 DEFAULT_PASS = os.environ.get("CODEGRAPH_NEO4J_PASS", "codegraph123")
 
 TEST_SUFFIXES = (".spec.ts", ".spec.tsx", ".test.ts", ".test.tsx")
+PY_TEST_SUFFIXES = ("_test.py",)
+
+
+def _is_python_test_file(name_lower: str) -> bool:
+    """Return True for conventional pytest file names (``test_*.py`` / ``*_test.py``)."""
+    return name_lower.startswith("test_") or any(
+        name_lower.endswith(s) for s in PY_TEST_SUFFIXES
+    )
 
 
 # ── top-level callback: enter REPL when no subcommand ───────────────
@@ -162,7 +176,8 @@ def _run_index(
             f"({nf} file / {nr} route / {nc} component)"
         )
 
-    parser = TsParser()
+    ts_parser = TsParser()
+    py_parser = None  # Lazy — only constructed if a Python package is configured.
     index_obj = Index()
     exclude_dirs = config.effective_exclude_dirs()
     exclude_suffixes = config.effective_exclude_suffixes()
@@ -173,18 +188,35 @@ def _run_index(
         if not pkg_dir.exists() or not pkg_dir.is_dir():
             say(f"[yellow]skip[/] package {pkg_path} (not found at {pkg_dir})")
             continue
-        pkg_configs.append(load_package_config(repo, pkg_dir))
-        say(f"  [green]•[/] {pkg_path}: aliases={list(pkg_configs[-1].aliases.keys())}")
 
-        info = FrameworkDetector(pkg_dir).detect()
-        pkg_node = PackageNode.from_framework_info(pkg_configs[-1].name, info)
-        index_obj.packages.append(pkg_node)
-        version_str = f" v{info.version}" if info.version else ""
-        say(
-            f"    [cyan]framework[/] {pkg_node.framework}{version_str} "
-            f"(conf {info.confidence:.0%}, ts={info.typescript}, "
-            f"pm={info.package_manager or '?'})"
-        )
+        # Auto-detect language: a directory with __init__.py is Python, else TS.
+        if (pkg_dir / "__init__.py").exists():
+            pkg_config = load_python_package_config(repo, pkg_dir)
+        else:
+            pkg_config = load_package_config(repo, pkg_dir)
+        pkg_configs.append(pkg_config)
+
+        lang_label = pkg_config.language
+        say(f"  [green]•[/] {pkg_path} ({lang_label}): aliases={list(pkg_config.aliases.keys())}")
+
+        if pkg_config.language == "ts":
+            info = FrameworkDetector(pkg_dir).detect()
+            pkg_node = PackageNode.from_framework_info(pkg_config.name, info)
+            index_obj.packages.append(pkg_node)
+            version_str = f" v{info.version}" if info.version else ""
+            say(
+                f"    [cyan]framework[/] {pkg_node.framework}{version_str} "
+                f"(conf {info.confidence:.0%}, ts={info.typescript}, "
+                f"pm={info.package_manager or '?'})"
+            )
+        else:
+            # Python: Stage 1 skips framework detection. Emit a placeholder
+            # :Package node so the BELONGS_TO edges still wire up in the graph.
+            pkg_node = PackageNode(
+                name=pkg_config.name, framework="Unknown", confidence=0.0,
+            )
+            index_obj.packages.append(pkg_node)
+            say(f"    [cyan]framework[/] Unknown (python; detection in Stage 2)")
     if not pkg_configs:
         raise ConfigError(
             "No valid packages found — every configured package was missing on "
@@ -193,12 +225,16 @@ def _run_index(
 
     to_parse: list[tuple[Path, str, str, bool]] = []
     for pkg in pkg_configs:
+        # Restrict accepted extensions to the package's language. A TS
+        # package walking a .py script (or vice versa) would be a misconfig;
+        # we skip silently rather than try to parse it with the wrong frontend.
+        allowed_suffixes = (".py",) if pkg.language == "py" else (".ts", ".tsx")
         for p in pkg.root.rglob("*"):
             if not p.is_file():
                 continue
             if any(part in exclude_dirs for part in p.parts):
                 continue
-            if p.suffix.lower() not in (".ts", ".tsx"):
+            if p.suffix.lower() not in allowed_suffixes:
                 continue
             name_lower = p.name.lower()
             if any(name_lower.endswith(suf) for suf in exclude_suffixes):
@@ -208,7 +244,10 @@ def _run_index(
                     continue
             except OSError:
                 continue
-            is_test = any(name_lower.endswith(suf) for suf in TEST_SUFFIXES)
+            if pkg.language == "py":
+                is_test = _is_python_test_file(name_lower)
+            else:
+                is_test = any(name_lower.endswith(suf) for suf in TEST_SUFFIXES)
             rel = str(p.resolve().relative_to(repo)).replace("\\", "/")
             if ignore_filter is not None and ignore_filter.should_ignore_file(rel):
                 continue
@@ -220,7 +259,13 @@ def _run_index(
     t0 = time.time()
     progress_step = max(1, len(to_parse) // 20)
     for i, (abs_p, rel, pkg_name, is_test) in enumerate(to_parse):
-        result = parser.parse_file(abs_p, rel, pkg_name, is_test=is_test)
+        if abs_p.suffix.lower() == ".py":
+            if py_parser is None:
+                from .py_parser import PyParser
+                py_parser = PyParser()
+            result = py_parser.parse_file(abs_p, rel, pkg_name, is_test=is_test)
+        else:
+            result = ts_parser.parse_file(abs_p, rel, pkg_name, is_test=is_test)
         if result is None:
             continue
         index_obj.add(result)

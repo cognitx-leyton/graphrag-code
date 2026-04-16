@@ -238,6 +238,24 @@ codegraph index . --package packages/server --package packages/web
 
 If no config file exists and no `--package` flags are passed, `index` stops with a clear error. There are no Twenty-specific or other defaults.
 
+### Python support (`.py` indexing)
+
+codegraph also indexes Python codebases. The detector auto-picks the language based on the package directory: if the directory contains `__init__.py`, it's parsed as Python; otherwise it's parsed as TypeScript (with `tsconfig.json` / `package.json`).
+
+Install the optional `[python]` extra to enable the Python frontend:
+
+```bash
+pip install "codegraph[python]"
+```
+
+Then point `--package` at a Python package root (the directory containing `__init__.py`):
+
+```bash
+codegraph index . --package src/my_package
+```
+
+Stage 1 indexes: modules (`.py` files), classes, functions, methods, imports (relative + absolute + `import x as y`), class inheritance, and decorators. Framework detection (FastAPI / Flask / Django / Typer / pytest) and route extraction land in Stage 2.
+
 ### Neo4j connection
 
 Controlled via environment variables (defaults match the bundled `docker-compose.yml`):
