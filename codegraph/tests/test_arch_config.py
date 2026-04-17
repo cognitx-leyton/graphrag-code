@@ -47,6 +47,7 @@ def test_missing_file_returns_defaults(tmp_path: Path):
     assert cfg.layer_bypass.service_suffix == "Service"
     assert cfg.layer_bypass.call_depth == 3
     assert cfg.custom == []
+    assert cfg.schema_version == 1
 
 
 def test_empty_file_returns_defaults(tmp_path: Path):
@@ -61,6 +62,69 @@ def test_explicit_path_override(tmp_path: Path):
     custom_path.write_text("[policies.import_cycles]\nenabled = false\n")
     cfg = load_arch_config(tmp_path, path=custom_path)
     assert cfg.import_cycles.enabled is False
+
+
+# ── Schema versioning ─────────────────────────────────────
+
+
+def test_missing_meta_defaults_to_version_1(tmp_path: Path):
+    _write(tmp_path, """
+[policies.import_cycles]
+enabled = false
+""")
+    cfg = load_arch_config(tmp_path)
+    assert cfg.schema_version == 1
+
+
+def test_explicit_version_1_accepted(tmp_path: Path):
+    _write(tmp_path, """
+[meta]
+schema_version = 1
+""")
+    cfg = load_arch_config(tmp_path)
+    assert cfg.schema_version == 1
+
+
+def test_future_version_rejected(tmp_path: Path):
+    _write(tmp_path, """
+[meta]
+schema_version = 99
+""")
+    with pytest.raises(ArchConfigError, match="not supported.*upgrade"):
+        load_arch_config(tmp_path)
+
+
+def test_version_zero_rejected(tmp_path: Path):
+    _write(tmp_path, """
+[meta]
+schema_version = 0
+""")
+    with pytest.raises(ArchConfigError, match="positive integer"):
+        load_arch_config(tmp_path)
+
+
+def test_version_wrong_type_rejected(tmp_path: Path):
+    _write(tmp_path, """
+[meta]
+schema_version = "1"
+""")
+    with pytest.raises(ArchConfigError, match="must be an integer"):
+        load_arch_config(tmp_path)
+
+
+def test_version_bool_rejected(tmp_path: Path):
+    _write(tmp_path, """
+[meta]
+schema_version = true
+""")
+    with pytest.raises(ArchConfigError, match="must be an integer"):
+        load_arch_config(tmp_path)
+
+
+def test_meta_must_be_table(tmp_path: Path):
+    _write(tmp_path, 'meta = "wrong"\n')
+    with pytest.raises(ArchConfigError, match=r"\[meta\] must be a table"):
+        load_arch_config(tmp_path)
 
 
 # ── Built-in policy tuning ──────────────────────────────────
