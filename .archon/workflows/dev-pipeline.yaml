@@ -65,12 +65,19 @@ nodes:
         echo "PASS: Neo4j started"
       fi
 
-      # Venv
+      # Venv — create if missing (worktrees don't have .venv)
       if .venv/bin/codegraph --help > /dev/null 2>&1; then
         echo "PASS: venv OK"
       else
-        echo "FAIL: venv missing or broken"
-        PASS=false
+        echo "WARN: venv missing — creating..."
+        python3 -m venv .venv
+        .venv/bin/pip install -e ".[python,mcp,test]" -q
+        if .venv/bin/codegraph --help > /dev/null 2>&1; then
+          echo "PASS: venv created"
+        else
+          echo "FAIL: venv creation failed"
+          PASS=false
+        fi
       fi
 
       # Tests
