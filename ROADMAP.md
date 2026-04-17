@@ -2,26 +2,29 @@
 
 > **Purpose of this document.** Capture enough context for a fresh agent session (or a human returning after time away) to continue work on codegraph without re-deriving state from scratch. Separate from the user-facing roadmap bullets in `README.md`, which stay short and pitch-oriented.
 >
-> **Last updated:** 2026-04-17 after commits `af77cd3` → `939dfc3` (slash commands + arch-check CI + onboarding scaffolder + Python Stage 2 + MCP prompt templates + describe_schema CypherSyntaxError fix + query_graph bool/limit validation fix + max_depth bounds + bool bypass fix for all three traversal tools + 15 missing MCP tool tests for full coverage).
+> **Last updated:** 2026-04-17 after commits `af77cd3` → `6d9205b` (slash commands + arch-check CI + onboarding scaffolder + Python Stage 2 + MCP prompt templates + describe_schema CypherSyntaxError fix + query_graph bool/limit validation fix + max_depth bounds + bool bypass fix for all three traversal tools + 15 missing MCP tool tests for full coverage + query_graph error-handling dedup into _run_read).
 
 ---
 
 ## TL;DR — where we are
 
-- **Branch:** `archon/task-chore-issue-31-missing-mcp-tests`. Working tree clean. 15 missing MCP tool tests added as `939dfc3`.
+- **Branch:** `archon/task-chore-issue-32-query-graph-dedup`. Working tree clean. `query_graph` error-handling deduplicated into `_run_read` as `6d9205b`.
 - **Tests:** 315 passing + 1 deselected (Docker-slow integration test), 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
 - **Graph indexed:** Twenty CRM is currently loaded into the local Neo4j container at `bolt://localhost:7688` (13,473 files, 2,559 classes, 6,088 methods, 5,562 CALLS, 6,708 hook usages, 4,593 RENDERS).
 - **MCP server:** 13 read-only tools live + **29 prompt templates** (all Cypher blocks from `queries.md` auto-registered via `_register_query_prompts()`). `codegraph-mcp` console script registered. Smoke-tested via raw JSON-RPC.
-- **Package:** `cognitx-codegraph` v0.1.7 in `pyproject.toml`. Wheel + sdist build cleanly. **Not yet on PyPI** — needs one-time operational setup (Trusted Publisher registration).
+- **Package:** `cognitx-codegraph` v0.1.8 in `pyproject.toml`. Wheel + sdist build cleanly. **Not yet on PyPI** — needs one-time operational setup (Trusted Publisher registration).
 - **CI:** `.github/workflows/arch-check.yml` — every PR to `main` spins up Neo4j, indexes, runs `codegraph arch-check`, fails on architecture violations. Verified live on PR #8 (42s, exit 0).
 - **Onboarding:** `codegraph init` scaffolds everything needed to dogfood codegraph in any repo. Live-tested against 3 fixtures including the real Twenty monorepo (13k files indexed end-to-end).
 - **Python Stage 2:** FastAPI / Flask / Django / SQLAlchemy framework detection + `:Endpoint` nodes. `/trace-endpoint` now works against Python repos.
 
 ---
 
-## Shipped since the last roadmap update (commit `72bdecb`)
+## Shipped since the last roadmap update (commit `edd53cb`)
 
 ```
+6d9205b chore(mcp):     deduplicate query_graph error-handling into _run_read (#32)
+27d4fec chore:          bump version to 0.1.8
+e77e3cd Merge pull request #70 from cognitx-leyton/archon/task-chore-issue-31-missing-mcp-tests
 939dfc3 test(mcp):      add 15 missing MCP tool tests for full coverage (#31)
 8556630 chore:          bump version to 0.1.7
 e500554 Merge pull request #66 from cognitx-leyton/archon/task-fix-issue-33-max-depth-bounds
@@ -47,7 +50,10 @@ edb8cca feat(parser):   extract docstrings, params, and return types for Python
 09822fa docs(roadmap):  session handoff document for continuing work across agents
 ```
 
-Five sessions' worth of work grouped by theme:
+Six sessions' worth of work grouped by theme:
+
+### MCP code deduplication: query_graph error-handling into _run_read (issue #32)
+- `6d9205b chore(mcp)` — Replaced the 10-line duplicated `try/except` block inside `query_graph()` (lines 234–243) with a single delegation: `return _run_read(cypher)[:limit]`. The `_run_read` helper already owns driver acquisition, session management, and all error handling (`CypherSyntaxError`, `ClientError`, `ServiceUnavailable`). The old inline copy was an exact duplicate. Post-dedup: `query_graph` is now 4 lines of pure input validation + delegation, same output contract. All 8 `query_graph` tests pass unchanged — error handling, limit slicing, and row serialisation all work identically through `_run_read`. One subtle trade-off accepted: the new code calls `clean_row()` on all rows before slicing (whereas the old code sliced raw records first), but `clean_row()` is trivially cheap and Cypher-level `LIMIT` in the user's query bounds the set in practice.
 
 ### MCP test coverage: 15 missing tool tests (issue #31)
 - `939dfc3 test(mcp)` — Added 15 unit tests to `tests/test_mcp.py` (94 → 109 in that file; suite 300 → 315 overall). Covered three previously untested tools: `calls_from` (happy-path, file-filter, bad-limit), `callers_of` (happy-path, file-filter, bad-limit), `describe_function` (happy-path, file-filter, no-decorators). Also extended the two error-path parametrized tests (`test_new_tools_surface_client_error`, `test_new_tools_surface_service_unavailable`) with three entries each for the new tools. Each test verifies output data shape, Cypher query structure, parameter binding, and error handling — matching the established `_FakeDriver` pattern.
@@ -102,10 +108,10 @@ Beyond unit/integration tests, these were dogfooded against real systems:
 
 | Thing | Value |
 |---|---|
-| Current branch | `archon/task-chore-issue-31-missing-mcp-tests` |
+| Current branch | `archon/task-chore-issue-32-query-graph-dedup` |
 | Base branch | `main` |
-| Unpushed commits | 0 (working tree clean; `939dfc3` already committed) |
-| Open PR | Issue #31 test coverage branch pending merge. |
+| Unpushed commits | 0 (working tree clean; `6d9205b` already committed) |
+| Open PR | Issue #32 query_graph dedup branch pending merge. |
 | Working tree | Clean |
 | Test count | 315 passing + 1 deselected |
 | Test runtime | ~16 s |
@@ -377,6 +383,7 @@ Repo-local plans under `.claude/plans/`:
 
 - `fix-issue-33-max-depth-bounds.plan.md` — shipped as `6b74617`.
 - `issue-31-missing-mcp-tests.plan.md` — shipped as `939dfc3`.
+- `query-graph-dedup.plan.md` — shipped as `6d9205b`.
 
 Older plans (not in repo): `sunny-giggling-moon.md` (the MCP retriever batch), `framework-detector-port.md`. These live in `~/.claude/plans/` and get overwritten on each `/plan` session unless preserved manually.
 
@@ -485,6 +492,7 @@ Grep commit bodies for rationale:
 - Why Python Stage 2 uses `framework.py` scored heuristics rather than per-file flags → `6493224`
 - Why `query_graph` rejects bool limits (Python bool ⊂ int — `isinstance(True, int)` is True) → `6fe0730`
 - Why all three traversal tools use `default=1, max=5` for `max_depth` (consistent bounds; bool bypass was the same root cause as #30; `or isinstance(max_depth, bool)` guard matches `_validate_limit` pattern) → `6b74617`
+- Why `query_graph` delegates to `_run_read` instead of owning its own try/except (DRY: `_run_read` already handles all three error types; the 10-line inline copy was an exact duplicate; one accepted trade-off is that `clean_row()` now runs before slicing rather than after, which is negligible) → `6d9205b`
 
 ### Git remotes
 
