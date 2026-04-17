@@ -309,6 +309,9 @@ nodes:
     context: fresh
     prompt: |
       Update ROADMAP.md at the repo root to reflect what was just implemented.
+      This step is MANDATORY — you MUST edit and commit the ROADMAP.md file.
+
+      Working directory: /home/edouard-gouilliard/Obsidian/SecondBrain/Personal/projects/graphrag-code
 
       Implementation summary:
       $dev-cycle.output
@@ -319,13 +322,27 @@ nodes:
       2. Run `git log --oneline -10` to see recent commits
       3. Update these sections:
          - "TL;DR — where we are" — branch state, test count, package version
-         - "Shipped since the last roadmap update" — add new commits
+         - "Shipped since the last roadmap update" — add new commits grouped by theme
          - "Repository state" — update table
          - "What's next (ranked)" — move completed items, re-rank remaining
          - "Known open questions" — remove resolved, add new
       4. Update the "Last updated" header with today's date and commit range
 
       Do NOT rewrite sections that haven't changed.
+
+      5. COMMIT the ROADMAP update (MANDATORY — do not skip this):
+         ```bash
+         cd /home/edouard-gouilliard/Obsidian/SecondBrain/Personal/projects/graphrag-code
+         git add ROADMAP.md
+         git commit -m "docs(roadmap): update session handoff after $(git log --oneline -1 --format='%h')
+
+         Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>"
+         ```
+
+      6. Verify the commit exists:
+         ```bash
+         git log --oneline -1  # should show the roadmap commit
+         ```
 
   # ═══════════════════════════════════════════════════════════════
   # Step 9: Package and publish
@@ -337,22 +354,52 @@ nodes:
     prompt: |
       Bump the version, build, and publish to PyPI.
 
+      Working directory: /home/edouard-gouilliard/Obsidian/SecondBrain/Personal/projects/graphrag-code/codegraph
+
       ## Instructions
 
-      1. Read current version: `grep '^version' pyproject.toml`
-      2. Bump patch: 0.1.X → 0.1.X+1
-      3. Edit pyproject.toml with the new version
-      4. Commit the version bump:
+      1. Read current version:
          ```bash
          cd /home/edouard-gouilliard/Obsidian/SecondBrain/Personal/projects/graphrag-code/codegraph
-         git add pyproject.toml
-         git commit -m "chore: bump version to 0.1.X
-
-         Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>"
+         grep '^version' pyproject.toml
          ```
-      5. Build: `rm -f dist/* && .venv/bin/python -m build`
-      6. Upload: `.venv/bin/twine upload dist/*`
-      7. Verify: check PyPI JSON API for the new version
+
+      2. Bump patch: 0.1.X → 0.1.X+1. Edit pyproject.toml with the new version.
+
+      3. COMMIT the version bump (MANDATORY — must be on this branch):
+         ```bash
+         git add pyproject.toml
+         git commit -m "$(cat <<'EOF'
+         chore: bump version to 0.1.X
+
+         Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>
+         EOF
+         )"
+         ```
+
+      4. Verify the commit is on the current branch:
+         ```bash
+         git log --oneline -1  # should show the version bump commit
+         git branch --show-current  # should be the feature branch, NOT dev/main/hotfix
+         ```
+
+      5. Build:
+         ```bash
+         rm -f dist/*
+         .venv/bin/python -m build
+         ls dist/  # should show .whl and .tar.gz
+         ```
+
+      6. Upload:
+         ```bash
+         .venv/bin/twine upload dist/*
+         ```
+
+      7. Verify on PyPI:
+         ```bash
+         sleep 5  # wait for propagation
+         curl -s https://pypi.org/pypi/cognitx-codegraph/json | python3 -c "import sys,json; print('Published:', json.load(sys.stdin)['info']['version'])"
+         ```
 
       Output the version number and PyPI URL.
 
@@ -500,13 +547,13 @@ nodes:
          curl -s https://pypi.org/pypi/cognitx-codegraph/json | python3 -c "import sys,json; print(json.load(sys.stdin)['info']['version'])"
          ```
 
-      4. If the input mentioned an issue number, add a comment to the issue
-         explaining what was implemented:
+      4. MANDATORY — if the user's original request mentioned an issue number,
+         you MUST comment on the issue. Do NOT skip this step. Extract the issue
+         number from $USER_MESSAGE (e.g., "issue #12" → 12).
          ```bash
          gh issue comment <N> --body "$(cat <<'EOF'
          ## Implementation Complete
 
-         **PR:** <PR will be linked below>
          **Package:** cognitx-codegraph=={version}
 
          ### What was done
@@ -521,6 +568,11 @@ nodes:
          This issue will be automatically closed when the PR is merged.
          EOF
          )"
+         ```
+         Verify the comment was added:
+         ```bash
+         gh issue view <N> --json comments --jq '.comments | length'
+         # Should be > 0
          ```
 
       5. Create the PR. If an issue number was mentioned, include `Closes #N`
