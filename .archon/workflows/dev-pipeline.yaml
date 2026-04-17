@@ -5,6 +5,17 @@ description: |
   Does: preflight -> research -> plan -> implement/review/commit/critique loop -> roadmap -> package -> test -> file-issues -> create-pr
   NOT for: quick one-off fixes, documentation-only changes, manual exploration
 
+  Run with:
+    archon workflow run dev-pipeline --from hotfix --branch feat/issue-<N>-<slug> "implement issue #<N>"
+
+  Examples:
+    archon workflow run dev-pipeline --from hotfix --branch feat/issue-12-mcp-prompts "implement issue #12"
+    archon workflow run dev-pipeline --from hotfix --branch fix/issue-15-unresolved-imports "investigate issue #15"
+    archon workflow run dev-pipeline --from hotfix --branch feat/issue-13-incremental-reindex "implement issue #13"
+
+  Branch naming: feat/ for features, fix/ for bugs, chore/ for maintenance.
+  Always base off hotfix (--from hotfix) to get the latest code.
+
 provider: claude
 model: sonnet
 effort: high
@@ -22,14 +33,17 @@ nodes:
       PASS=true
       echo "=== Pre-flight Checks ==="
 
-      # Git branch
+      # Git branch — should be a feature branch (feat/, fix/, chore/) not main/release/hotfix
       BRANCH=$(git branch --show-current)
-      if [ "$BRANCH" = "dev" ]; then
-        echo "PASS: on dev branch"
-      else
-        echo "FAIL: on $BRANCH, expected dev"
-        PASS=false
-      fi
+      case "$BRANCH" in
+        main|release|hotfix)
+          echo "FAIL: on protected branch $BRANCH — use --branch feat/issue-N-slug"
+          PASS=false
+          ;;
+        *)
+          echo "PASS: on branch $BRANCH"
+          ;;
+      esac
 
       # Working tree
       DIRTY=$(git status --porcelain | grep -v '^\?\?' | head -1)
@@ -67,21 +81,6 @@ nodes:
       else
         echo "FAIL: tests — $PASS_COUNT"
         PASS=false
-      fi
-
-      # Sync main to dev so Archon worktrees have latest code
-      echo "Syncing main to dev..."
-      git push origin dev 2>/dev/null || true
-      MAIN_SHA=$(git rev-parse origin/main)
-      DEV_SHA=$(git rev-parse origin/dev)
-      if [ "$MAIN_SHA" != "$DEV_SHA" ]; then
-        echo "WARN: main is behind dev — creating sync PR..."
-        gh pr create --base main --head dev --title "chore: sync dev to main" --body "Auto-sync before workflow run" 2>/dev/null || true
-        gh pr merge --merge --admin 2>/dev/null || true
-        git fetch origin
-        echo "PASS: main synced to dev"
-      else
-        echo "PASS: main already in sync with dev"
       fi
 
       if [ "$PASS" = "true" ]; then
@@ -470,28 +469,30 @@ nodes:
       List all issues created with their numbers and titles.
 
   # ═══════════════════════════════════════════════════════════════
-  # Step 12: Create PR to release
+  # Step 12: Create PR to hotfix
   # ═══════════════════════════════════════════════════════════════
 
   - id: create-pr
     depends_on: [file-issues]
     context: fresh
     prompt: |
-      Create a pull request from dev to release.
+      Create a pull request from the current feature branch to hotfix.
 
       Package version: $package.output
       Test results: $test-cycle.output
 
       ## Instructions
 
-      1. Push dev:
+      1. Push the current branch:
          ```bash
-         git push origin dev
+         BRANCH=$(git branch --show-current)
+         git push origin "$BRANCH"
          ```
 
       2. Get commit list:
          ```bash
-         git log --oneline release..dev
+         BRANCH=$(git branch --show-current)
+         git log --oneline hotfix.."$BRANCH"
          ```
 
       3. Get PyPI version:
@@ -526,7 +527,8 @@ nodes:
          in the PR body — GitHub will auto-close the issue when the PR is merged.
          Do NOT manually close the issue — let GitHub handle it via the PR merge.
          ```bash
-         gh pr create --base release --head dev --title "<type>: <description>" --body "$(cat <<'EOF'
+         BRANCH=$(git branch --show-current)
+         gh pr create --base hotfix --head "$BRANCH" --title "<type>: <description>" --body "$(cat <<'EOF'
          Closes #<N>
 
          ## Summary
