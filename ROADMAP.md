@@ -2,14 +2,14 @@
 
 > **Purpose of this document.** Capture enough context for a fresh agent session (or a human returning after time away) to continue work on codegraph without re-deriving state from scratch. Separate from the user-facing roadmap bullets in `README.md`, which stay short and pitch-oriented.
 >
-> **Last updated:** 2026-04-17 after commits `af77cd3` → `357ad03` (slash commands + arch-check CI + onboarding scaffolder + Python Stage 2 + MCP prompt templates).
+> **Last updated:** 2026-04-17 after commits `af77cd3` → `fa031dd` (slash commands + arch-check CI + onboarding scaffolder + Python Stage 2 + MCP prompt templates + describe_schema CypherSyntaxError fix).
 
 ---
 
 ## TL;DR — where we are
 
-- **Branch:** `archon/task-feat-issue-12-mcp-prompts`. Working tree clean. Implementation for issue #12 committed as `357ad03`.
-- **Tests:** 277 passing + 1 deselected (Docker-slow integration test), 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
+- **Branch:** `archon/task-fix-issue-29-describe-schema-error`. Working tree clean. Fix for issue #29 committed as `fa031dd`.
+- **Tests:** 278 passing + 1 deselected (Docker-slow integration test), 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
 - **Graph indexed:** Twenty CRM is currently loaded into the local Neo4j container at `bolt://localhost:7688` (13,473 files, 2,559 classes, 6,088 methods, 5,562 CALLS, 6,708 hook usages, 4,593 RENDERS).
 - **MCP server:** 13 read-only tools live + **29 prompt templates** (all Cypher blocks from `queries.md` auto-registered via `_register_query_prompts()`). `codegraph-mcp` console script registered. Smoke-tested via raw JSON-RPC.
 - **Package:** `cognitx-codegraph` v0.2.0 in `pyproject.toml`. Wheel + sdist build cleanly. **Not yet on PyPI** — needs one-time operational setup (Trusted Publisher registration).
@@ -22,6 +22,8 @@
 ## Shipped since the last roadmap update (commit `7588522`)
 
 ```
+fa031dd fix(mcp):       catch CypherSyntaxError in describe_schema before ClientError (#29)
+eaee6a7 chore:          bump version to 0.1.3
 357ad03 feat(mcp):      expose queries.md as MCP prompt templates (#12)
 6493224 feat(parser):   Python Stage 2 framework detection + endpoints + resolver fixes
 c6da6c6 fix(cli):       detect modern src-layout Python packages via pyproject.toml
@@ -38,6 +40,9 @@ edb8cca feat(parser):   extract docstrings, params, and return types for Python
 ```
 
 Four sessions' worth of work grouped by theme:
+
+### MCP bug fix: describe_schema CypherSyntaxError (issue #29)
+- `fa031dd fix(mcp)` — `describe_schema()` in `mcp.py` now catches `CypherSyntaxError` before the broader `ClientError` handler, returning `{"error": "Cypher syntax error: ..."}` consistently. Matches the pattern already used in `_run_read()` and `query_graph()`. One new test (`test_describe_schema_surfaces_cypher_syntax_error`) added to `test_mcp.py` — injects a `CypherSyntaxError`, calls `describe_schema()`, asserts the error dict has the correct prefix and original message. Test count 277 → 278.
 
 ### MCP prompt templates (issue #12)
 - `357ad03 feat(mcp)` — `_parse_queries_md()`, `_slugify()`, `_register_query_prompts()` added to `mcp.py` (lines 47–131). Parses all `##` headings + fenced Cypher blocks in `queries.md`, registers each as a FastMCP `Prompt` via `Prompt.from_function()`. 29 prompts registered at server startup (matches the 29 Cypher blocks in `queries.md`). Prompt names are slugified from the heading (e.g. `schema-overview`, `4-impact-analysis-who-depends-on-x`); duplicate headings get `-2`/`-3` suffixes. `//` comment lines become descriptions; heading is the fallback. Missing `queries.md` is handled gracefully (0 prompts, no crash). 10 new tests in `test_mcp.py` cover parsing, slugification, registration, rendering, and the missing-file edge case.
@@ -80,12 +85,12 @@ Beyond unit/integration tests, these were dogfooded against real systems:
 
 | Thing | Value |
 |---|---|
-| Current branch | `archon/task-feat-issue-12-mcp-prompts` |
+| Current branch | `archon/task-fix-issue-29-describe-schema-error` |
 | Base branch | `main` |
-| Unpushed commits | 0 (working tree clean; `357ad03` already committed) |
-| Open PR | #8 `dev → main` (the earlier work). Issue #12 branch pending merge. |
+| Unpushed commits | 0 (working tree clean; `fa031dd` already committed) |
+| Open PR | #8 `dev → main` (the earlier work). Issue #29 fix branch pending merge. |
 | Working tree | Clean |
-| Test count | 277 passing + 1 deselected |
+| Test count | 278 passing + 1 deselected |
 | Test runtime | ~16 s |
 | Byte-compile | Clean |
 | Last editable install | After `357ad03`. Re-run `cd codegraph && .venv/bin/pip install -e .` after any `pyproject.toml` edit. |
@@ -430,7 +435,7 @@ asking. Do not merge the open PR #8 without asking.
 | `test_ignore.py` | 19 | `ignore.py` + cli helpers |
 | `test_framework.py` | 18 | `framework.py` (TS) |
 | `test_py_framework.py` | 13 | `framework.py` (Python Stage 2) |
-| `test_mcp.py` | 45 | `mcp.py` (13 tools + 29 prompts) |
+| `test_mcp.py` | 46 | `mcp.py` (13 tools + 29 prompts + describe_schema error handling) |
 | `test_py_parser.py` | 28 | `py_parser.py` (Stage 1 parsing) |
 | `test_py_parser_calls.py` | 12 | Method-body CALLS emission |
 | `test_py_parser_endpoints.py` | 18 | Python Stage 2 endpoint parsing |
@@ -442,7 +447,7 @@ asking. Do not merge the open PR #8 without asking.
 | `test_arch_config.py` | 20 | `.arch-policies.toml` parser (built-ins + custom + validation errors) |
 | `test_init.py` | 17 | Scaffolder helpers (detection, prompts, render, write) |
 | `test_init_integration.py` | 2 (1 slow) | End-to-end scaffold + optional Docker |
-| **Total** | **277** | |
+| **Total** | **278** | |
 
 ### Key decisions recorded in commit messages
 
