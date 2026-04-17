@@ -226,11 +226,11 @@ def query_graph(cypher: str, limit: int = 20) -> list[dict]:
     Args:
         cypher: Cypher query string. Example:
             ``MATCH (c:Class {is_controller:true}) RETURN c.name LIMIT 10``
-        limit: Maximum rows to return (default 20, cap 1000).
+        limit: Max rows to return. Integer in 1..1000, default 20.
     """
-    if not isinstance(limit, int) or limit < 1:
-        return [{"error": "limit must be a positive integer"}]
-    limit = min(limit, 1000)
+    err = _validate_limit(limit)
+    if err:
+        return [{"error": err}]
     try:
         with _read_session() as s:
             records = list(s.run(cypher))[:limit]
