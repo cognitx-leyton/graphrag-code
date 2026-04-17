@@ -144,6 +144,9 @@ Every policy (built-in or custom) is tunable via a `.arch-policies.toml` file at
 Full schema:
 
 ```toml
+[meta]
+schema_version = 1   # required in future versions; omit for v1 (backwards compatible)
+
 # ── Built-in policies: tune or disable ─────────────────────────
 
 [policies.import_cycles]
@@ -187,6 +190,16 @@ sample_cypher = "MATCH (e:Endpoint) WHERE NOT EXISTS { (:Method)-[:HANDLES]->(e)
 - Every `sample_cypher` should return at most 10 rows — each row becomes a dict in the JSON report's `sample` array.
 - Custom policy names must be unique and must not collide with built-in names (`import_cycles`, `cross_package`, `layer_bypass`).
 - Malformed TOML or invalid fields → exit code 2 with a clear error message (not exit code 1, which means policy violations).
+
+### Schema versioning
+
+The `[meta]` section carries metadata about the config file itself. Currently the only field is `schema_version`:
+
+- **Omitted or `1`**: current schema, fully supported.
+- **Greater than supported**: `codegraph arch-check` exits with code 2 and a message telling you which codegraph version to upgrade to.
+- **`0` or negative**: rejected as invalid.
+
+Existing `.arch-policies.toml` files without `[meta]` continue to work — they're treated as version 1.
 
 ### Worked examples by repo shape
 

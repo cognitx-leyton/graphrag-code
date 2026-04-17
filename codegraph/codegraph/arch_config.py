@@ -8,6 +8,9 @@ so users can add rules without forking the Python package.
 
 TOML schema (all sections optional):
 
+    [meta]
+    schema_version = 1
+
     [policies.import_cycles]
     enabled  = true
     min_hops = 2
@@ -46,6 +49,7 @@ else:  # pragma: no cover
 
 
 DEFAULT_CONFIG_FILENAME = ".arch-policies.toml"
+CURRENT_SCHEMA_VERSION = 1
 
 
 class ArchConfigError(ValueError):
@@ -111,6 +115,7 @@ class ArchConfig:
     cross_package: CrossPackageConfig = field(default_factory=CrossPackageConfig)
     layer_bypass: LayerBypassConfig = field(default_factory=LayerBypassConfig)
     custom: list[CustomPolicy] = field(default_factory=list)
+    schema_version: int = 1
 
 
 # ── Loader ───────────────────────────────────────────────────
@@ -132,6 +137,30 @@ def load_arch_config(repo_root: Path, path: Optional[Path] = None) -> ArchConfig
     except tomllib.TOMLDecodeError as exc:
         raise ArchConfigError(f"Malformed TOML in {config_path}: {exc}") from exc
 
+    # ── [meta] section — schema versioning ──
+    meta = raw.get("meta", {})
+    if not isinstance(meta, dict):
+        raise ArchConfigError(
+            f"{config_path}: [meta] must be a table, got {type(meta).__name__}"
+        )
+    schema_version = meta.get("schema_version", CURRENT_SCHEMA_VERSION)
+    if isinstance(schema_version, bool) or not isinstance(schema_version, int):
+        raise ArchConfigError(
+            f"{config_path}: meta.schema_version must be an integer"
+        )
+    if schema_version < 1:
+        raise ArchConfigError(
+            f"{config_path}: meta.schema_version must be a positive integer "
+            f"(got {schema_version})"
+        )
+    if schema_version > CURRENT_SCHEMA_VERSION:
+        raise ArchConfigError(
+            f"{config_path}: schema_version {schema_version} is not supported "
+            f"by this version of codegraph (max {CURRENT_SCHEMA_VERSION}). "
+            f"Please upgrade: pip install --upgrade codegraph"
+        )
+
+    # ── [policies] section ──
     policies = raw.get("policies", {})
     if not isinstance(policies, dict):
         raise ArchConfigError(
@@ -143,6 +172,7 @@ def load_arch_config(repo_root: Path, path: Optional[Path] = None) -> ArchConfig
         cross_package=_parse_cross_package(policies.get("cross_package", {}), config_path),
         layer_bypass=_parse_layer_bypass(policies.get("layer_bypass", {}), config_path),
         custom=_parse_custom(policies.get("custom", []), config_path),
+        schema_version=schema_version,
     )
 
 
