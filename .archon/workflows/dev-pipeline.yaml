@@ -469,7 +469,7 @@ nodes:
       List all issues created with their numbers and titles.
 
   # ═══════════════════════════════════════════════════════════════
-  # Step 12: Create PR to release
+  # Step 12: Create PR to hotfix
   # ═══════════════════════════════════════════════════════════════
 
   - id: create-pr

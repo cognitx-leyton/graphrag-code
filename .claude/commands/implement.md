@@ -26,10 +26,11 @@ Create one first: /plan_local "feature description"
 ## Phase 2: Verify Starting State
 
 ```bash
-git branch --show-current   # must be dev
+git branch --show-current   # must be a feature branch (feat/, fix/, chore/)
 git status -s               # should be clean
 ```
 
+If on a protected branch (main/release/hotfix/dev): STOP, wrong branch.
 If dirty: warn user, don't proceed until resolved.
 
 ## Phase 3: Execute
