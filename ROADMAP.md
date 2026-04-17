@@ -2,25 +2,28 @@
 
 > **Purpose of this document.** Capture enough context for a fresh agent session (or a human returning after time away) to continue work on codegraph without re-deriving state from scratch. Separate from the user-facing roadmap bullets in `README.md`, which stay short and pitch-oriented.
 >
-> **Last updated:** 2026-04-16 after commits `af77cd3` → `c6da6c6` (slash commands + arch-check CI + onboarding scaffolder).
+> **Last updated:** 2026-04-17 after commits `af77cd3` → `357ad03` (slash commands + arch-check CI + onboarding scaffolder + Python Stage 2 + MCP prompt templates).
 
 ---
 
 ## TL;DR — where we are
 
-- **Branch:** `dev`. Five unpushed commits ahead of `origin/dev` (see list below). Also ahead of `main`: PR #8 (`dev → main`) is open on GitHub with the earlier work.
-- **Tests:** 223 passing + 1 deselected (Docker-slow integration test), 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
+- **Branch:** `archon/task-feat-issue-12-mcp-prompts`. Working tree clean. Implementation for issue #12 committed as `357ad03`.
+- **Tests:** 277 passing + 1 deselected (Docker-slow integration test), 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
 - **Graph indexed:** Twenty CRM is currently loaded into the local Neo4j container at `bolt://localhost:7688` (13,473 files, 2,559 classes, 6,088 methods, 5,562 CALLS, 6,708 hook usages, 4,593 RENDERS).
-- **MCP server:** 10 read-only tools live. `codegraph-mcp` console script registered. Smoke-tested via raw JSON-RPC.
-- **Package:** renamed to `cognitx-codegraph` v0.2.0 in `pyproject.toml`. Wheel + sdist build cleanly. **Not yet on PyPI** — needs one-time operational setup (Trusted Publisher registration).
+- **MCP server:** 13 read-only tools live + **29 prompt templates** (all Cypher blocks from `queries.md` auto-registered via `_register_query_prompts()`). `codegraph-mcp` console script registered. Smoke-tested via raw JSON-RPC.
+- **Package:** `cognitx-codegraph` v0.2.0 in `pyproject.toml`. Wheel + sdist build cleanly. **Not yet on PyPI** — needs one-time operational setup (Trusted Publisher registration).
 - **CI:** `.github/workflows/arch-check.yml` — every PR to `main` spins up Neo4j, indexes, runs `codegraph arch-check`, fails on architecture violations. Verified live on PR #8 (42s, exit 0).
 - **Onboarding:** `codegraph init` scaffolds everything needed to dogfood codegraph in any repo. Live-tested against 3 fixtures including the real Twenty monorepo (13k files indexed end-to-end).
+- **Python Stage 2:** FastAPI / Flask / Django / SQLAlchemy framework detection + `:Endpoint` nodes. `/trace-endpoint` now works against Python repos.
 
 ---
 
 ## Shipped since the last roadmap update (commit `7588522`)
 
 ```
+357ad03 feat(mcp):      expose queries.md as MCP prompt templates (#12)
+6493224 feat(parser):   Python Stage 2 framework detection + endpoints + resolver fixes
 c6da6c6 fix(cli):       detect modern src-layout Python packages via pyproject.toml
 d0abe53 feat(onboarding): one-command install for any repo via codegraph init
 b12520a chore(ci):      enable workflow_dispatch for arch-check
@@ -34,7 +37,13 @@ edb8cca feat(parser):   extract docstrings, params, and return types for Python
 09822fa docs(roadmap):  session handoff document for continuing work across agents
 ```
 
-Three sessions' worth of work grouped by theme:
+Four sessions' worth of work grouped by theme:
+
+### MCP prompt templates (issue #12)
+- `357ad03 feat(mcp)` — `_parse_queries_md()`, `_slugify()`, `_register_query_prompts()` added to `mcp.py` (lines 47–131). Parses all `##` headings + fenced Cypher blocks in `queries.md`, registers each as a FastMCP `Prompt` via `Prompt.from_function()`. 29 prompts registered at server startup (matches the 29 Cypher blocks in `queries.md`). Prompt names are slugified from the heading (e.g. `schema-overview`, `4-impact-analysis-who-depends-on-x`); duplicate headings get `-2`/`-3` suffixes. `//` comment lines become descriptions; heading is the fallback. Missing `queries.md` is handled gracefully (0 prompts, no crash). 10 new tests in `test_mcp.py` cover parsing, slugification, registration, rendering, and the missing-file edge case.
+
+### Python frontend (Stage 2)
+- `6493224 feat(parser)` — `py_parser.py` extended with framework detection for FastAPI (`@app.get` / `@router.post`), Flask (`@app.route`), Django (`urls.py` path matching + class-based views), and SQLAlchemy (`class Model(Base)` with `Column` fields). Emits `:Endpoint` nodes with method + path. `framework.py` gains `FrameworkType.FASTAPI` / `FLASK` / `DJANGO` with scored heuristics. Resolver fixes for edge cases exposed by the e2e test. `/trace-endpoint` now returns rows against Python repos. Adds 3 new test files: `test_py_framework.py` (13 tests), `test_py_parser_endpoints.py` (18 tests), `test_resolver_bugs.py` (13 tests).
 
 ### Python frontend (Stage 1)
 - `154954c feat(parser)` — `py_parser.py` with tree-sitter-python. Walks modules, classes, methods, imports, decorators. Mirrors `parser.py`'s `ParseResult` contract. Python frontend is an **optional extra** (`pip install "cognitx-codegraph[python]"`), keeps the TS-only install light.
@@ -71,15 +80,15 @@ Beyond unit/integration tests, these were dogfooded against real systems:
 
 | Thing | Value |
 |---|---|
-| Current branch | `dev` |
+| Current branch | `archon/task-feat-issue-12-mcp-prompts` |
 | Base branch | `main` |
-| Unpushed commits | 5 (af77cd3 → c6da6c6) |
-| Open PR | #8 `dev → main` (the earlier work; latest 5 commits not yet pushed) |
-| Working tree | Clean modulo session logs; only user-local `.claude/commands/*.md` files pre-existing are untracked (intentional) |
-| Test count | 223 passing + 1 deselected |
-| Test runtime | ~12 s |
+| Unpushed commits | 0 (working tree clean; `357ad03` already committed) |
+| Open PR | #8 `dev → main` (the earlier work). Issue #12 branch pending merge. |
+| Working tree | Clean |
+| Test count | 277 passing + 1 deselected |
+| Test runtime | ~16 s |
 | Byte-compile | Clean |
-| Last editable install | After `c6da6c6`. Re-run `cd codegraph && .venv/bin/pip install -e .` after any `pyproject.toml` edit. |
+| Last editable install | After `357ad03`. Re-run `cd codegraph && .venv/bin/pip install -e .` after any `pyproject.toml` edit. |
 | Wheel built? | Yes — `codegraph/dist/cognitx_codegraph-0.2.0-py3-none-any.whl` (from this session) |
 
 ---
@@ -236,31 +245,9 @@ The ranking assumes the same `plan → implement → e2e validate → commit` cy
 
 ### Tier B — feature work, ranked
 
-#### B1. Python Stage 2 — framework detection + endpoints
+~~#### B1. Python Stage 2 — framework detection + endpoints~~ **SHIPPED** (`6493224`)
 
-**What:** Extend `py_parser.py` to recognise FastAPI / Flask / Django conventions. Emit `:Endpoint`, `:Controller`, `INJECTS`, `DECORATED_BY`-as-routing signals, like the TS Stage 2 does for NestJS.
-
-**Why:** Today `/trace-endpoint` returns zero rows against Python repos. The whole CI gate + graph query surface assumes framework-construct awareness. Python parity unlocks Django / FastAPI / Flask users.
-
-**Scope:** ~600 LOC across `py_parser.py` + `framework.py` + new tests.
-- Detect FastAPI: `@app.get` / `@router.post` decorator → `:Endpoint` with method + path.
-- Detect Flask: `@app.route('/users', methods=['GET'])` → `:Endpoint`.
-- Detect Django: `urls.py` path matching + `class ViewName(View)` + `path('/users/', UserView.as_view())`.
-- Detect SQLAlchemy: `class User(Base)` with `Column` fields → `:Entity` + `:Column` nodes.
-- Detect `@pytest.fixture` (already caught by DECORATED_BY but could flag).
-- Per-package `FrameworkType.FASTAPI` / `FLASK` / `DJANGO` entries in `framework.py` with scored heuristics.
-
-**Gotchas:** Django's URL routing is a data structure, not decorators — needs AST walk of `urls.py`. FastAPI's route decorators can be applied via `@router.get` where `router = APIRouter()` — need to follow the variable's class back to know it's a route.
-
-**Delivers:** Makes codegraph genuinely multi-language. `codegraph init` already handles Python-only repos; this makes the resulting graph rich.
-
-#### B2. MCP resources / prompts — `queries.md` as named prompt templates
-
-**What:** Expose the queries in `codegraph/queries.md` as `@mcp.prompt()` templates. Agent calls `prompts/get` with a name and gets a structured prompt including the Cypher + context.
-
-**Why:** Natural companion to the 10 tools. No schema or loader changes. `queries.md` was written as documentation; promoting it to machine-consumable templates is a small polish.
-
-**Scope:** ~150 LOC + tests. Parse `queries.md` headings and fenced blocks, register with FastMCP prompt API.
+~~#### B2. MCP resources / prompts — `queries.md` as named prompt templates~~ **SHIPPED** (`357ad03`)
 
 #### B3. Incremental re-indexing (`codegraph index --since HEAD~N`)
 
@@ -325,7 +312,7 @@ Custom Cypher policies are already supported via `[[policies.custom]]` in `.arch
 
 2. **Unresolved imports percentage** (B6) — 29% is high; investigation before fix.
 
-3. **Python Stage 2 priority vs. arch-check policy expansion vs. incremental re-indexing** — all three are valuable. B1 (Python frameworks) unlocks the most new users. B3 (incremental re-index) closes the dev-loop gap. More arch-check policies directly improve the CI gate. No clear answer without user input.
+3. ~~**Python Stage 2 priority vs. arch-check policy expansion vs. incremental re-indexing**~~ — B1 (Python Stage 2) and B2 (MCP prompts) are now shipped. Next priority: B3 (incremental re-indexing) vs. more arch-check policies vs. B4 (MCP write tools).
 
 4. **Init's first-index timeout on huge repos** — `codegraph init --yes` runs the first index synchronously. Twenty's 3-minute index is fine; a 20k+ file repo (e.g. Babel, TypeScript compiler, monorepo-of-monorepos) would time out the user's patience. Should init have a `--skip-index` nudge for giant repos, or detect and prompt? Currently the user can pass `--skip-index` manually.
 
@@ -402,7 +389,7 @@ Before doing anything:
 
 Then pick up at the "What's next" section. Unless the user says otherwise,
 my priority order is: Tier A (push + PyPI publish + Claude Code
-verification) → B1 (Python Stage 2) → B3 (incremental re-indexing).
+verification) → B3 (incremental re-indexing) → B4 (MCP write tools).
 
 Do not push to origin without asking. Do not publish to PyPI without
 asking. Do not merge the open PR #8 without asking.
@@ -428,7 +415,7 @@ asking. Do not merge the open PR #8 without asking.
 | `arch_config.py` | `.arch-policies.toml` parser → typed `ArchConfig` | ~275 |
 | `ignore.py` | `.codegraphignore` parser + `IgnoreFilter` | ~180 |
 | `framework.py` | Per-package framework detection (`FrameworkDetector`) | ~510 |
-| `mcp.py` | FastMCP stdio server with 10 tools | ~410 |
+| `mcp.py` | FastMCP stdio server with 13 tools + 29 prompt templates | ~610 |
 | `ownership.py` | Git log → author mapping onto graph nodes | ~130 |
 | `validate.py` | Post-load sanity-check suite | ~400 |
 | `repl.py` | Interactive Cypher REPL | ~320 |
@@ -441,18 +428,21 @@ asking. Do not merge the open PR #8 without asking.
 | File | Count | Target |
 |---|---|---|
 | `test_ignore.py` | 19 | `ignore.py` + cli helpers |
-| `test_framework.py` | 23 | `framework.py` |
-| `test_mcp.py` | 61 | `mcp.py` (10 tools) |
-| `test_py_parser.py` | ~30 | `py_parser.py` (Stage 1 parsing) |
+| `test_framework.py` | 18 | `framework.py` (TS) |
+| `test_py_framework.py` | 13 | `framework.py` (Python Stage 2) |
+| `test_mcp.py` | 45 | `mcp.py` (13 tools + 29 prompts) |
+| `test_py_parser.py` | 28 | `py_parser.py` (Stage 1 parsing) |
 | `test_py_parser_calls.py` | 12 | Method-body CALLS emission |
-| `test_py_resolver.py` | ~15 | Python import resolution + CALLS wiring + super() |
+| `test_py_parser_endpoints.py` | 18 | Python Stage 2 endpoint parsing |
+| `test_py_resolver.py` | 14 | Python import resolution + CALLS wiring + super() |
+| `test_resolver_bugs.py` | 13 | Resolver edge-case regression tests |
 | `test_loader_partitioning.py` | 3 | Function DECORATED_BY routing |
 | `test_loader_pairing.py` | 6 | TS + Python test-file pairing |
-| `test_arch_check.py` | 16 | Policies + orchestrator + custom policy runner |
+| `test_arch_check.py` | 19 | Policies + orchestrator + custom policy runner |
 | `test_arch_config.py` | 20 | `.arch-policies.toml` parser (built-ins + custom + validation errors) |
 | `test_init.py` | 17 | Scaffolder helpers (detection, prompts, render, write) |
 | `test_init_integration.py` | 2 (1 slow) | End-to-end scaffold + optional Docker |
-| **Total** | **223** | |
+| **Total** | **277** | |
 
 ### Key decisions recorded in commit messages
 
@@ -466,6 +456,8 @@ Grep commit bodies for rationale:
 - Why function-level DECORATED_BY routing was missing → `d48ee26`
 - Why `pyproject.toml` / `setup.py` / `setup.cfg` are Python markers → `c6da6c6`
 - Why `cognitx-codegraph` as the PyPI name → `d0abe53`
+- Why `queries.md` headings/fenced-blocks drive prompt registration (not hardcoded names) → `357ad03`
+- Why Python Stage 2 uses `framework.py` scored heuristics rather than per-file flags → `6493224`
 
 ### Git remotes
 
