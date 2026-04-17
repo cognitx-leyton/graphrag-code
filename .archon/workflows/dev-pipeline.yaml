@@ -69,6 +69,21 @@ nodes:
         PASS=false
       fi
 
+      # Sync main to dev so Archon worktrees have latest code
+      echo "Syncing main to dev..."
+      git push origin dev 2>/dev/null || true
+      MAIN_SHA=$(git rev-parse origin/main)
+      DEV_SHA=$(git rev-parse origin/dev)
+      if [ "$MAIN_SHA" != "$DEV_SHA" ]; then
+        echo "WARN: main is behind dev — creating sync PR..."
+        gh pr create --base main --head dev --title "chore: sync dev to main" --body "Auto-sync before workflow run" 2>/dev/null || true
+        gh pr merge --merge --admin 2>/dev/null || true
+        git fetch origin
+        echo "PASS: main synced to dev"
+      else
+        echo "PASS: main already in sync with dev"
+      fi
+
       if [ "$PASS" = "true" ]; then
         echo "READY"
       else
@@ -99,8 +114,10 @@ nodes:
       gh issue view <number>
       ```
 
-      ### 2. Query the codegraph (MANDATORY)
-      The codegraph CLI is at `.venv/bin/codegraph`. Use it to understand what the change touches.
+      ### 2. Query the codegraph (MANDATORY — do NOT skip this)
+      The codegraph CLI is at `.venv/bin/codegraph`. You MUST run at least 3 codegraph
+      queries below before proceeding. Do NOT substitute with Read/Grep — the graph
+      has cross-file relationships that file reading cannot reveal.
 
       Find affected symbols:
       ```bash
@@ -189,7 +206,9 @@ nodes:
          - Include expected test counts
          - NO vague criteria like "tests pass" or "feature works"
 
-      Save the plan to `.claude/plans/` with a descriptive kebab-case name.
+      Save the plan to `codegraph/.claude/plans/` with a descriptive kebab-case name.
+      Use the FULL path from the working directory, not ~/.claude/plans/.
+      The plan MUST be inside the repo, not in your home directory.
 
       Output the plan file path when done.
 
@@ -500,6 +519,11 @@ nodes:
          Generated with [Claude Code](https://claude.com/claude-code)
          EOF
          )"
+         ```
+
+      5. Close the source issue (if the input mentioned an issue number):
+         ```bash
+         gh issue close <N> --comment "Implemented in <PR URL>"
          ```
 
       Output the PR URL.
