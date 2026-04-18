@@ -2,14 +2,14 @@
 
 > **Purpose of this document.** Capture enough context for a fresh agent session (or a human returning after time away) to continue work on codegraph without re-deriving state from scratch. Separate from the user-facing roadmap bullets in `README.md`, which stay short and pitch-oriented.
 >
-> **Last updated:** 2026-04-18 after commits `daae936` → `c6460d2` (unresolved imports fix shipped as issue #15; scoped npm packages + tsconfig extends array handled; version bumped to 0.1.18).
+> **Last updated:** 2026-04-18 after commits `1ca7de2` → `ae21e20` (arch-check auto-scope from config packages + `--no-scope` flag shipped as issue #105; version bumped to 0.1.19).
 
 ---
 
 ## TL;DR — where we are
 
-- **Branch:** `archon/task-fix-issue-15-unresolved-imports`. Workspace resolver + tsconfig extends fix shipped as `c6460d2`; PR #103 (MCP write tools, issue #14) merged to main; version bumped to 0.1.18.
-- **Tests:** 429 passing + 1 deselected (Docker-slow integration test), 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
+- **Branch:** `archon/task-fix-issue-105`. Auto-scope from config packages + `--no-scope` flag shipped as `ae21e20`; PR #106 merged to main; version bumped to 0.1.19.
+- **Tests:** 433 passing + 1 deselected (Docker-slow integration test), 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
 - **Graph indexed:** Twenty CRM is currently loaded into the local Neo4j container at `bolt://localhost:7688` (13,473 files, 2,559 classes, 6,088 methods, 5,562 CALLS, 6,708 hook usages, 4,593 RENDERS).
 - **MCP server:** 13 read-only tools + **2 write tools** (`wipe_graph`, `reindex_file`) gated by `--allow-write` flag + **29 prompt templates** (all Cypher blocks from `queries.md` auto-registered via `_register_query_prompts()`). `codegraph-mcp` console script registered. Smoke-tested via raw JSON-RPC.
 - **Package:** `cognitx-codegraph` v0.1.18 in `pyproject.toml`. Wheel + sdist build cleanly. **Not yet on PyPI** — needs one-time operational setup (Trusted Publisher registration). `release.yml` now waits for propagation and smoke-tests the published version.
@@ -21,9 +21,13 @@
 
 ---
 
-## Shipped since the last roadmap update (commit `daae936`)
+## Shipped since the last roadmap update (commit `1ca7de2`)
 
 ```
+ae21e20 feat(arch-check): auto-scope from config packages, add --no-scope flag
+325f4ff Merge pull request #106 from cognitx-leyton/archon/task-fix-issue-105
+1d9154f chore: bump version to 0.1.19
+1ca7de2 docs(roadmap): update session handoff
 c6460d2 fix(resolver): handle scoped npm packages and tsconfig extends array
 92b58fe Merge pull request #103 from cognitx-leyton/archon/task-feat-issue-14-mcp-write-tools
 8cf25f7 chore: bump version to 0.1.18
@@ -90,7 +94,13 @@ edb8cca feat(parser):   extract docstrings, params, and return types for Python
 09822fa docs(roadmap):  session handoff document for continuing work across agents
 ```
 
-Thirteen sessions' worth of work grouped by theme:
+Fourteen sessions' worth of work grouped by theme:
+
+### Arch-check auto-scope from config packages + `--no-scope` flag (issue #105)
+
+- `ae21e20 feat(arch-check)` — `cli.py` `arch_check` command gains two new behaviours. **(1) Auto-scope from config:** when `--scope` is omitted and `--no-scope` is not set, the command calls `load_config()` to read `codegraph.toml` / `pyproject.toml`; if `packages` are configured, those paths become the effective scope (forwarded to `run_arch_check()` as the `scope` list). A Rich console message reports the auto-detected scope (suppressed in `--json` mode). **(2) `--no-scope` flag:** explicit escape hatch to disable auto-scope and pass `None` scope, restoring the old behaviour of checking the full graph with no path filtering. Precedence: `--scope` explicit > auto-scope from config > `--no-scope` > no filtering (backward compat). **4 new tests** in `test_arch_check.py`: `test_arch_check_cli_auto_scope_from_config` (config packages become scope), `test_arch_check_cli_explicit_scope_overrides_config` (`--scope` wins over config), `test_arch_check_cli_no_scope_flag_disables_auto` (`--no-scope` passes `None`), `test_arch_check_cli_no_config_no_scope_passes_none` (no config = no filtering, backward compat). Test count: 429 → 433.
+
+- `325f4ff merge` + `1d9154f chore` — PR #106 (auto-scope, issue #105) merged to `main`; version bumped to v0.1.19.
 
 ### Unresolved imports — workspace registry + tsconfig extends chains (issue #15)
 
@@ -214,12 +224,12 @@ Beyond unit/integration tests, these were dogfooded against real systems:
 
 | Thing | Value |
 |---|---|
-| Current branch | `archon/task-fix-issue-15-unresolved-imports` |
+| Current branch | `archon/task-fix-issue-105` |
 | Base branch | `main` |
-| Unpushed commits | 1 (`c6460d2` — workspace resolver + tsconfig extends fix, pending PR) |
-| Open PR | Issue #15 unresolved-imports branch pending PR. PR #103 (MCP write tools) merged to main. |
-| Working tree | 1 untracked file (`.claude/plans/fix-unresolved-imports.plan.md`) |
-| Test count | 429 passing + 1 deselected |
+| Unpushed commits | 1 (`ae21e20` — arch-check auto-scope + --no-scope flag, pending PR) |
+| Open PR | Issue #105 auto-scope branch pending PR. PR #106 (auto-scope) merged to main. |
+| Working tree | Clean |
+| Test count | 433 passing + 1 deselected |
 | Test runtime | ~16 s |
 | Byte-compile | Clean |
 | Last editable install | After `357ad03`. Re-run `cd codegraph && .venv/bin/pip install -e .` after any `pyproject.toml` edit. |
@@ -480,6 +490,7 @@ Repo-local plans under `.claude/plans/`:
 - `incremental-reindex.plan.md` — shipped as `06e9873`.
 - `mcp-write-tools.plan.md` — shipped as `daae936`.
 - `fix-unresolved-imports.plan.md` — shipped as `c6460d2`.
+- `fix-issue-105-auto-scope.plan.md` — shipped as `ae21e20`.
 
 Older plans (not in repo): `sunny-giggling-moon.md` (the MCP retriever batch), `framework-detector-port.md`. These live in `~/.claude/plans/` and get overwritten on each `/plan` session unless preserved manually.
 
@@ -566,12 +577,12 @@ asking. Do not merge the open PR #8 without asking.
 | `test_resolver_bugs.py` | 28 | Resolver edge-case regression tests (+ 15 new: workspace resolution, scoped npm packages, tsconfig extends chains) |
 | `test_loader_partitioning.py` | 3 | Function DECORATED_BY routing |
 | `test_loader_pairing.py` | 6 | TS + Python test-file pairing |
-| `test_arch_check.py` | 50 | Policies + orchestrator + custom policy runner (including coupling_ceiling + orphan_detection + --scope filtering + suppression) |
+| `test_arch_check.py` | 56 | Policies + orchestrator + custom policy runner (including coupling_ceiling + orphan_detection + --scope filtering + suppression + CLI auto-scope / --no-scope) |
 | `test_arch_config.py` | 45 | `.arch-policies.toml` parser (built-ins + custom + validation errors + schema_version + coupling_ceiling + orphan_detection config + suppression) |
 | `test_init.py` | 19 | Scaffolder helpers (detection, prompts, render, write, container name uniqueness) |
 | `test_init_integration.py` | 2 (1 slow) | End-to-end scaffold + optional Docker |
 | `test_incremental.py` | 21 | `delete_file_subgraph`, `_file_from_id`, `load(touched_files=...)`, `_git_changed_files`, end-to-end `_run_index --since` wiring |
-| **Total** | **429** | |
+| **Total** | **433** | |
 
 ### Key decisions recorded in commit messages
 
@@ -617,6 +628,9 @@ Grep commit bodies for rationale:
 - Why `_try_workspace` probes `src/<subpath>/index.ts` before the package root (monorepos almost universally use `src/` as the source root; probing `src/` first avoids false-positive matches against root-level config or build artifacts with the same directory name) → `c6460d2`
 - Why `_read_ts_paths` caps `extends` recursion at 10 levels (the vast majority of real tsconfig chains are 2–3 levels; 10 is enough for pathological cases while preventing runaway recursion in malformed projects; the `_seen` set provides the primary cycle guard, the cap is a secondary defence) → `c6460d2`
 - Why `extends` as an array is normalised to a list before processing (TS 5.0 added array-valued `extends`; treating a string as a single-element list keeps the loop uniform and avoids a separate code path; the existing string-based path is the common case so no performance impact) → `c6460d2`
+- Why auto-scope reads `codegraph.toml` / `pyproject.toml` rather than inferring from the repo structure (the config's `packages` list is the authoritative user declaration of what _this_ codegraph installation cares about; inferring from directory heuristics would re-derive something the user already stated explicitly, and would be wrong for multi-tenant graphs where leytongo / Twenty are co-indexed) → `ae21e20`
+- Why `--no-scope` is needed when auto-scope is active (the graph may deliberately co-index multiple projects for cross-project arch-check; `--no-scope` restores the pre-#105 full-graph behaviour without requiring the user to delete their config) → `ae21e20`
+- Why `--scope` takes precedence over auto-scope (explicit always beats implicit; a CI job that passes `--scope` should not be silently overridden by whatever config the target repo happens to have) → `ae21e20`
 - Why `_git_changed_files` treats renamed files as delete-old + add-new (the old path's subgraph must be cleaned so its nodes don't become orphaned; the new path is re-parsed fresh; treating a rename as a single "move" would require a graph rename operation that doesn't exist) → `06e9873`
 - Why `load(touched_files=...)` always writes packages even in incremental mode (Package nodes encode framework-level metadata shared across files; filtering them out to save time could leave the Package table stale if the only changed file was the one that determined the framework) → `06e9873`
 
