@@ -25,9 +25,14 @@ python -m compileall codegraph/ -q
 Test that the published package is installable with version assertion and retry for PyPI propagation lag:
 
 ```bash
+SCOPE="${ARGUMENTS:-all}"
+if [[ "$SCOPE" != "all" && "$SCOPE" != "install" && "$SCOPE" != "" ]]; then
+  echo "SKIP: install test (scope is '$SCOPE', not 'install' or 'all')"
+else
+
 LATEST=$(grep '^version' pyproject.toml | sed 's/.*"\(.*\)"/\1/')
 MAX_ATTEMPTS=3
-BACKOFF=30
+BACKOFF=15
 INSTALL_OK=false
 
 for attempt in $(seq 1 $MAX_ATTEMPTS); do
@@ -49,16 +54,21 @@ for attempt in $(seq 1 $MAX_ATTEMPTS); do
   if [ "$attempt" -lt "$MAX_ATTEMPTS" ]; then
     echo "Attempt $attempt/$MAX_ATTEMPTS: expected $LATEST, got $INSTALLED. Retrying in ${BACKOFF}s..."
     sleep $BACKOFF
+    BACKOFF=$((BACKOFF * 2))
   else
     echo "Install FAILED — expected $LATEST but got $INSTALLED after $MAX_ATTEMPTS attempts"
     exit 1
   fi
 done
+
+fi
 ```
 
-**Pass criteria**: Installed version matches `pyproject.toml` version exactly. Retries up to 3 times with 30s backoff for PyPI propagation lag.
+**Pass criteria**: Installed version matches `pyproject.toml` version exactly. Retries up to 3 times with exponential backoff (15s, 30s) for PyPI propagation lag.
 
 > **Note**: The `exit 1` ensures a non-zero exit in standalone / CI contexts. When run as a Claude Code slash command, Claude also reads the "Install FAILED" echo to determine the outcome.
+
+> **Tip**: Run `/test unit` to skip the install test during local development.
 
 ## Stage 3: Self-Index (dogfood)
 
