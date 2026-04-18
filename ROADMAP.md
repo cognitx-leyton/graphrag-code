@@ -2,26 +2,30 @@
 
 > **Purpose of this document.** Capture enough context for a fresh agent session (or a human returning after time away) to continue work on codegraph without re-deriving state from scratch. Separate from the user-facing roadmap bullets in `README.md`, which stay short and pitch-oriented.
 >
-> **Last updated:** 2026-04-18 after commits `78fb177` → `9ebc0e4` (`--scope` flag added to `arch-check` to filter all five built-in policies by path prefix; PR #89 merged to main; version bumped to 0.1.14).
+> **Last updated:** 2026-04-18 after commits `aff9f10` → `9d05a44` (inline suppression for false-positive arch-check violations shipped as issue #23; PR #92 merged to main; version bumped to 0.1.15).
 
 ---
 
 ## TL;DR — where we are
 
-- **Branch:** `archon/task-feat-issue-22-arch-check-scope`. Working tree has one untracked plan file (`.claude/plans/arch-check-scope.plan.md`). `--scope` flag shipped as `9ebc0e4`; PR #89 (`orphan_detection` fix + merge) landed to main.
-- **Tests:** 351 passing + 1 deselected (Docker-slow integration test), 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
+- **Branch:** `archon/task-feat-issue-23-arch-check-suppression`. Working tree has one untracked plan file (`.claude/plans/arch-check-suppression.plan.md`). Suppression feature shipped as `9d05a44`; PR #92 (`--scope` flag) merged to main.
+- **Tests:** 375 passing + 1 deselected (Docker-slow integration test), 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
 - **Graph indexed:** Twenty CRM is currently loaded into the local Neo4j container at `bolt://localhost:7688` (13,473 files, 2,559 classes, 6,088 methods, 5,562 CALLS, 6,708 hook usages, 4,593 RENDERS).
 - **MCP server:** 13 read-only tools live + **29 prompt templates** (all Cypher blocks from `queries.md` auto-registered via `_register_query_prompts()`). `codegraph-mcp` console script registered. Smoke-tested via raw JSON-RPC.
-- **Package:** `cognitx-codegraph` v0.1.14 in `pyproject.toml`. Wheel + sdist build cleanly. **Not yet on PyPI** — needs one-time operational setup (Trusted Publisher registration). `release.yml` now waits for propagation and smoke-tests the published version.
+- **Package:** `cognitx-codegraph` v0.1.15 in `pyproject.toml`. Wheel + sdist build cleanly. **Not yet on PyPI** — needs one-time operational setup (Trusted Publisher registration). `release.yml` now waits for propagation and smoke-tests the published version.
 - **CI:** `.github/workflows/arch-check.yml` — every PR to `main` spins up Neo4j, indexes, runs `codegraph arch-check`, fails on architecture violations. Verified live on PR #8 (42s, exit 0).
 - **Onboarding:** `codegraph init` scaffolds everything needed to dogfood codegraph in any repo. Live-tested against 3 fixtures including the real Twenty monorepo (13k files indexed end-to-end).
 - **Python Stage 2:** FastAPI / Flask / Django / SQLAlchemy framework detection + `:Endpoint` nodes. `/trace-endpoint` now works against Python repos.
 
 ---
 
-## Shipped since the last roadmap update (commit `78fb177`)
+## Shipped since the last roadmap update (commit `aff9f10`)
 
 ```
+9d05a44 feat(arch-check): add inline suppression for false-positive violations
+508826e Merge pull request #92 from cognitx-leyton/archon/task-feat-issue-22-arch-check-scope
+7c95ac2 chore:          bump version to 0.1.15
+aff9f10 docs(roadmap):  update session handoff
 9ebc0e4 feat(arch-check): add --scope flag to filter policies by path prefix
 4956838 Merge pull request #89 from cognitx-leyton/archon/task-feat-issue-17-orphan-detection
 1b27921 fix(arch-check): exclude pytest entry points from orphan_detection function query
@@ -72,7 +76,15 @@ edb8cca feat(parser):   extract docstrings, params, and return types for Python
 09822fa docs(roadmap):  session handoff document for continuing work across agents
 ```
 
-Ten sessions' worth of work grouped by theme:
+Eleven sessions' worth of work grouped by theme:
+
+### Inline suppression — false-positive suppression for arch-check violations (issue #23)
+
+- `9d05a44 feat(arch-check)` — `arch_config.py` gains a `Suppression` dataclass (`policy: str`, `key: str`, `reason: str`) and a `_parse_suppressions()` function that parses `[[suppress]]` entries from `.arch-policies.toml`; `ArchConfig.suppressions` holds the list. `arch_check.py` extends `PolicyResult` with `suppressed_count: int` and `suppressed_sample: list[str]`; extends `ArchReport` with `stale_suppressions: list[str]` (suppressions that matched no violation). Three new functions: `_violation_key(policy, row)` generates the canonical per-policy key string (cycle edge `"A -> B"`, file path, `"kind:name"`, etc.); `_match_suppression_key(suppression_key, violation_key)` performs substring matching so `"A -> B"` matches any cycle containing that consecutive pair; `_apply_suppressions(policy, result, suppressions)` walks violations in the sample, removes matching ones, and tracks stale entries. `run_arch_check()` calls `_apply_suppressions()` after every built-in and custom policy result; stale entries are collected into `ArchReport.stale_suppressions`. `_render()` gains a **WARN** state (yellow) for policies that passed only because suppressions removed all violations — visually distinct from a clean PASS; stale suppression entries are listed after the policy table with a "stale suppressions" header. `to_json()` includes the new `stale_suppressions` field. `codegraph/docs/arch-policies.md` gets a full "Suppression" section: TOML format, key format reference table (one row per policy type), sample-window caveat, stale-suppression behaviour, and a note that unknown policy names appear as stale (useful for typo detection). **24 new tests**: 8 in `test_arch_config.py` (parse valid suppression, missing policy field, missing key field, optional reason defaults empty, empty suppress list, multi-entry, unknown policy name doesn't error at parse time); 15 in `test_arch_check.py` (violation key generation for all 5 policy types, suppression matching exact/substring/no-match, apply_suppressions clears violations, stale detection, integration). One code-review fix: replaced `suppressions.index(s)` with `id_to_idx = {id(s): i ...}` mapping to avoid O(n) scan and broken-with-duplicate-entries behaviour. Test count: 351 → 375.
+
+### Version bump + `--scope` PR merged to main
+
+- `7c95ac2 chore` + `508826e merge` — bumped `pyproject.toml` to v0.1.15 and merged PR #92 (`--scope` flag, issue #22) to `main`.
 
 ### `--scope` flag for arch-check — path-prefix filtering on all built-in policies (issue #22)
 
@@ -168,12 +180,12 @@ Beyond unit/integration tests, these were dogfooded against real systems:
 
 | Thing | Value |
 |---|---|
-| Current branch | `archon/task-feat-issue-22-arch-check-scope` |
+| Current branch | `archon/task-feat-issue-23-arch-check-suppression` |
 | Base branch | `main` |
-| Unpushed commits | 1 (`9ebc0e4` — --scope flag, pending PR) |
-| Open PR | Issue #22 --scope flag branch pending PR. PR #89 (orphan_detection + pytest fix) merged to main. |
-| Working tree | 1 untracked file (`.claude/plans/arch-check-scope.plan.md`) |
-| Test count | 351 passing + 1 deselected |
+| Unpushed commits | 1 (`9d05a44` — inline suppression, pending PR) |
+| Open PR | Issue #23 suppression branch pending PR. PR #92 (--scope flag) merged to main. |
+| Working tree | 1 untracked file (`.claude/plans/arch-check-suppression.plan.md`) |
+| Test count | 375 passing + 1 deselected |
 | Test runtime | ~16 s |
 | Byte-compile | Clean |
 | Last editable install | After `357ad03`. Re-run `cd codegraph && .venv/bin/pip install -e .` after any `pyproject.toml` edit. |
@@ -448,6 +460,7 @@ Repo-local plans under `.claude/plans/`:
 - `coupling-ceiling-policy.plan.md` — shipped as `4213450`.
 - `feat-orphan-detection-policy.plan.md` — shipped as `2dd72b7`.
 - `arch-check-scope.plan.md` — shipped as `9ebc0e4`.
+- `arch-check-suppression.plan.md` — shipped as `9d05a44`.
 
 Older plans (not in repo): `sunny-giggling-moon.md` (the MCP retriever batch), `framework-detector-port.md`. These live in `~/.claude/plans/` and get overwritten on each `/plan` session unless preserved manually.
 
@@ -507,8 +520,8 @@ asking. Do not merge the open PR #8 without asking.
 | `loader.py` | Neo4j batch writer, constraints, indexes, `LoadStats` | ~815 |
 | `schema.py` | Node + edge dataclasses shared across parser → loader (+ shared test-pairing constants) | ~390 |
 | `config.py` | `codegraph.toml` / `pyproject.toml` config loader | ~190 |
-| `arch_check.py` | Architecture-conformance runner + 5 built-in policies + `--scope` path-prefix filtering + custom policy support | ~420 |
-| `arch_config.py` | `.arch-policies.toml` parser → typed `ArchConfig` | ~320 |
+| `arch_check.py` | Architecture-conformance runner + 5 built-in policies + `--scope` path-prefix filtering + suppression + custom policy support | ~490 |
+| `arch_config.py` | `.arch-policies.toml` parser → typed `ArchConfig` (incl. `Suppression` dataclass) | ~360 |
 | `ignore.py` | `.codegraphignore` parser + `IgnoreFilter` | ~180 |
 | `framework.py` | Per-package framework detection (`FrameworkDetector`) | ~510 |
 | `mcp.py` | FastMCP stdio server with 13 tools + 29 prompt templates | ~610 |
@@ -534,11 +547,11 @@ asking. Do not merge the open PR #8 without asking.
 | `test_resolver_bugs.py` | 13 | Resolver edge-case regression tests |
 | `test_loader_partitioning.py` | 3 | Function DECORATED_BY routing |
 | `test_loader_pairing.py` | 6 | TS + Python test-file pairing |
-| `test_arch_check.py` | 35 | Policies + orchestrator + custom policy runner (including coupling_ceiling + orphan_detection + --scope filtering) |
-| `test_arch_config.py` | 37 | `.arch-policies.toml` parser (built-ins + custom + validation errors + schema_version + coupling_ceiling + orphan_detection config) |
+| `test_arch_check.py` | 50 | Policies + orchestrator + custom policy runner (including coupling_ceiling + orphan_detection + --scope filtering + suppression) |
+| `test_arch_config.py` | 45 | `.arch-policies.toml` parser (built-ins + custom + validation errors + schema_version + coupling_ceiling + orphan_detection config + suppression) |
 | `test_init.py` | 19 | Scaffolder helpers (detection, prompts, render, write, container name uniqueness) |
 | `test_init_integration.py` | 2 (1 slow) | End-to-end scaffold + optional Docker |
-| **Total** | **351** | |
+| **Total** | **375** | |
 
 ### Key decisions recorded in commit messages
 
@@ -568,6 +581,10 @@ Grep commit bodies for rationale:
 - Why `kinds` defaults to all four types rather than just `["function", "class"]` (the policy is meant to surface all unreachable code; users who want narrower coverage explicitly opt in via config; rejecting an empty list rather than silently defaulting is consistent with `max_imports ≥ 1`) → `2dd72b7`
 - Why `--scope` does not override an explicit `orphan_detection.path_prefix` in `.arch-policies.toml` (`path_prefix` in config is a deliberate, committed choice; `--scope` is a convenience CLI override that should not silently clobber committed policy config; if the user wants `--scope` to control orphan scoping they leave `path_prefix` unset in the TOML) → `9ebc0e4`
 - Why custom `[[policies.custom]]` Cypher is excluded from `--scope` auto-scoping (the user writes that Cypher directly; auto-injecting a WHERE clause into arbitrary Cypher could break syntax or semantics; the user who cares about scoping their custom policies already controls the query) → `9ebc0e4`
+- Why suppression uses substring matching rather than exact-match for cycle keys (`"A -> B"` matches any cycle that contains that directed edge pair, regardless of cycle length or starting node; exact match would require users to reproduce the full cycle string, which is fragile) → `9d05a44`
+- Why suppression matching operates only on the sample rows, not on the full violation count (the violation count comes from an aggregation query; we can't know which of the un-sampled violations would also match without fetching all rows; applying `passed=True` only when `violation_count == suppressed_count` is the safe conservative path) → `9d05a44`
+- Why `suppressions.index(s)` was replaced with an `id_to_idx` identity map (`index()` is O(n) and broken when two `Suppression` objects are equal by value; identity-keyed dict gives O(1) lookup and correct behaviour with duplicate entries) → `9d05a44`
+- Why unknown policy names in `[[suppress]]` don't error at parse time (policy names are validated at match time so that stale suppressions for renamed or removed policies surface as "stale" warnings rather than hard config errors — easier to clean up) → `9d05a44`
 
 ### Git remotes
 
