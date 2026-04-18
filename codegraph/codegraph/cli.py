@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -26,7 +27,7 @@ from rich.table import Table
 from .config import ConfigError, load_config, merge_cli_overrides, require_packages
 from .framework import FrameworkDetector
 from .ignore import IgnoreConfigError, IgnoreFilter
-from .loader import Neo4jLoader
+from .loader import LoadStats, Neo4jLoader
 from .ownership import collect_ownership
 from .parser import TsParser
 from .resolver import (
@@ -60,6 +61,44 @@ DEFAULT_PASS = os.environ.get("CODEGRAPH_NEO4J_PASS", "codegraph123")
 def _is_python_test_file(name_lower: str) -> bool:
     """Return True for conventional pytest file names (``test_*.py`` / ``*_test.py``)."""
     return name_lower.startswith(PY_TEST_PREFIX) or name_lower.endswith(PY_TEST_SUFFIX_TRAILING)
+
+
+def _git_changed_files(repo: Path, since: str) -> tuple[set[str], set[str]]:
+    """Return ``(modified_or_added, deleted)`` file paths changed since *since*.
+
+    Runs ``git diff --name-status <since>`` and parses the output. Returns
+    repo-relative paths matching the ``rel`` format used by the Index. Raises
+    :class:`ConfigError` on git failure or invalid ref.
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "diff", "--name-status", since],
+            cwd=str(repo), capture_output=True, text=True, check=False, timeout=120,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ConfigError(f"git diff failed: {exc}") from exc
+    if proc.returncode != 0:
+        stderr = proc.stderr.strip()
+        raise ConfigError(f"git diff --name-status {since} failed: {stderr}")
+
+    modified: set[str] = set()
+    deleted: set[str] = set()
+    for line in proc.stdout.splitlines():
+        parts = line.split("\t")
+        if len(parts) < 2:
+            continue
+        status = parts[0]
+        if status == "D":
+            deleted.add(parts[1])
+        elif status.startswith("R"):
+            # Rename: old path deleted, new path added
+            if len(parts) >= 3:
+                deleted.add(parts[1])
+                modified.add(parts[2])
+        else:
+            # A, M, C, T, etc.
+            modified.add(parts[1])
+    return modified, deleted
 
 
 # ── top-level callback: enter REPL when no subcommand ───────────────
@@ -128,6 +167,11 @@ def index(
              "and @component: extensions). Overrides codegraph.toml. If unset, "
              "codegraph auto-detects <repo>/.codegraphignore.",
     ),
+    since: Optional[str] = typer.Option(
+        None, "--since",
+        help="Git ref (commit, tag, HEAD~N). Only re-index files changed since "
+             "this ref. Implies --no-wipe.",
+    ),
     as_json: bool = typer.Option(False, "--json", help="Emit stats as JSON on stdout."),
 ) -> None:
     """Index a TypeScript monorepo into Neo4j."""
@@ -143,6 +187,7 @@ def index(
             skip_ownership=skip_ownership,
             ignore_file=ignore_file,
             quiet=as_json,
+            since=since,
         )
     except ConfigError as e:
         _emit_error(as_json, "config", str(e))
@@ -169,15 +214,33 @@ def _run_index(
     skip_ownership: bool = False,
     ignore_file: Optional[str] = None,
     quiet: bool = False,
+    since: Optional[str] = None,
 ) -> dict[str, Any]:
     """Core indexing routine. Returns a flat dict of stats (files, edges, ...).
 
     Used by both the ``index`` command and the REPL's ``index`` handler.
     Pass ``quiet=True`` to suppress Rich output (used by ``--json`` mode).
+    When *since* is set, only files changed since that git ref are loaded
+    (incremental mode — implies ``wipe=False``).
     """
     def say(msg: str) -> None:
         if not quiet:
             console.print(msg)
+
+    # ── Incremental mode setup ──────────────────────────────────
+    changed_files: set[str] | None = None
+    deleted_files: set[str] = set()
+    if since is not None:
+        wipe = False
+        skip_ownership = True
+        say(f"[bold]Incremental mode[/] (--since {since})")
+        changed_files, deleted_files = _git_changed_files(repo, since)
+        if not changed_files and not deleted_files:
+            say(f"[green]No changes since {since}[/]")
+            return _flatten_load_stats(
+                LoadStats(), total_imports=0, unresolved_imports=0,
+            )
+        say(f"  changed: {len(changed_files)} files, deleted: {len(deleted_files)} files")
 
     config = load_config(repo)
     config = merge_cli_overrides(config, packages=packages, ignore_file=ignore_file)
@@ -340,11 +403,19 @@ def _run_index(
             say("[yellow]Wiping database…")
             loader.wipe()
             loader.init_schema()
+        # Incremental: clean up stale subgraphs for changed + deleted files.
+        if changed_files is not None:
+            cleanup_paths = list((changed_files | deleted_files))
+            if cleanup_paths:
+                t0 = time.time()
+                loader.delete_file_subgraph(cleanup_paths)
+                say(f"[yellow]Cleaned subgraph for {len(cleanup_paths)} files[/]  [{time.time()-t0:.1f}s]")
         t0 = time.time()
         ls = loader.load(
             index_obj,
             [e for e in all_edges if e.kind != "__STATS__"],
             ownership=ownership,
+            touched_files=changed_files,
         )
         say(f"[bold green]✓[/] loaded in {time.time()-t0:.1f}s")
     finally:
