@@ -2,26 +2,31 @@
 
 > **Purpose of this document.** Capture enough context for a fresh agent session (or a human returning after time away) to continue work on codegraph without re-deriving state from scratch. Separate from the user-facing roadmap bullets in `README.md`, which stay short and pitch-oriented.
 >
-> **Last updated:** 2026-04-18 after commits `62ded5a` → `2dd72b7` (`orphan_detection` fifth built-in policy added to `arch_check.py` + `arch_config.py`; PR #85 merged to main; version bumped to 0.1.13).
+> **Last updated:** 2026-04-18 after commits `78fb177` → `9ebc0e4` (`--scope` flag added to `arch-check` to filter all five built-in policies by path prefix; PR #89 merged to main; version bumped to 0.1.14).
 
 ---
 
 ## TL;DR — where we are
 
-- **Branch:** `archon/task-feat-issue-17-orphan-detection`. Working tree has one untracked plan file (`.claude/plans/feat-orphan-detection-policy.plan.md`). `orphan_detection` built-in policy shipped as `2dd72b7`; PR #85 merged to main.
-- **Tests:** 341 passing + 1 deselected (Docker-slow integration test), 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
+- **Branch:** `archon/task-feat-issue-22-arch-check-scope`. Working tree has one untracked plan file (`.claude/plans/arch-check-scope.plan.md`). `--scope` flag shipped as `9ebc0e4`; PR #89 (`orphan_detection` fix + merge) landed to main.
+- **Tests:** 351 passing + 1 deselected (Docker-slow integration test), 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
 - **Graph indexed:** Twenty CRM is currently loaded into the local Neo4j container at `bolt://localhost:7688` (13,473 files, 2,559 classes, 6,088 methods, 5,562 CALLS, 6,708 hook usages, 4,593 RENDERS).
 - **MCP server:** 13 read-only tools live + **29 prompt templates** (all Cypher blocks from `queries.md` auto-registered via `_register_query_prompts()`). `codegraph-mcp` console script registered. Smoke-tested via raw JSON-RPC.
-- **Package:** `cognitx-codegraph` v0.1.13 in `pyproject.toml`. Wheel + sdist build cleanly. **Not yet on PyPI** — needs one-time operational setup (Trusted Publisher registration). `release.yml` now waits for propagation and smoke-tests the published version.
+- **Package:** `cognitx-codegraph` v0.1.14 in `pyproject.toml`. Wheel + sdist build cleanly. **Not yet on PyPI** — needs one-time operational setup (Trusted Publisher registration). `release.yml` now waits for propagation and smoke-tests the published version.
 - **CI:** `.github/workflows/arch-check.yml` — every PR to `main` spins up Neo4j, indexes, runs `codegraph arch-check`, fails on architecture violations. Verified live on PR #8 (42s, exit 0).
 - **Onboarding:** `codegraph init` scaffolds everything needed to dogfood codegraph in any repo. Live-tested against 3 fixtures including the real Twenty monorepo (13k files indexed end-to-end).
 - **Python Stage 2:** FastAPI / Flask / Django / SQLAlchemy framework detection + `:Endpoint` nodes. `/trace-endpoint` now works against Python repos.
 
 ---
 
-## Shipped since the last roadmap update (commit `62ded5a`)
+## Shipped since the last roadmap update (commit `78fb177`)
 
 ```
+9ebc0e4 feat(arch-check): add --scope flag to filter policies by path prefix
+4956838 Merge pull request #89 from cognitx-leyton/archon/task-feat-issue-17-orphan-detection
+1b27921 fix(arch-check): exclude pytest entry points from orphan_detection function query
+d171787 chore:          bump version to 0.1.14
+78fb177 docs(roadmap):  update session handoff
 2dd72b7 feat(arch-check): add orphan_detection policy to surface unreachable nodes
 9c4130d Merge pull request #85 from cognitx-leyton/archon/task-feat-issue-16-coupling-ceiling
 ad9ccac chore:          bump version to 0.1.13
@@ -67,7 +72,17 @@ edb8cca feat(parser):   extract docstrings, params, and return types for Python
 09822fa docs(roadmap):  session handoff document for continuing work across agents
 ```
 
-Nine sessions' worth of work grouped by theme:
+Ten sessions' worth of work grouped by theme:
+
+### `--scope` flag for arch-check — path-prefix filtering on all built-in policies (issue #22)
+
+- `9ebc0e4 feat(arch-check)` — `arch_check.py` gains a `_scope_filter(scope, node_alias)` helper that generates a `WHERE x.path STARTS WITH $s0 OR ...` Cypher fragment + param dict for any number of prefixes. `scope: list[str] | None` is threaded through `run_arch_check()` → `_run_all()` → all five built-in `_check_*()` functions (`import_cycles`, `cross_package`, `layer_bypass`, `coupling_ceiling`, `orphans`). `orphan_detection.path_prefix` in `.arch-policies.toml` takes precedence over `--scope` when explicitly set — `--scope` is a convenience override, not a hard override. Custom `[[policies.custom]]` Cypher is intentionally not auto-scoped (user owns that query). `cli.py` gains a `--scope` repeatable `typer.Option` forwarded to `run_arch_check()`. `.github/workflows/arch-check.yml` updated to pass `--scope codegraph/codegraph --scope codegraph/tests` so CI checks only the indexed paths. `docs/arch-policies.md` gets a new "Scoping to specific packages" section. **9 new tests**: single-prefix filtering for all 5 policies, backwards-compat (no scope → no WHERE), multi-prefix OR-join (verifies `_scope0`/`_scope1` params), orphan path_prefix precedence, orchestrator forwarding. Test count: 342 → 351.
+
+- `1b27921 fix(arch-check)` — `orphan_detection` function query was including pytest entry points (`@pytest.fixture`, `@pytest.mark.*`) in the orphan set. Fixed by extending the `NONE` predicate to exclude functions decorated with any decorator whose name starts with `pytest`. Matched the existing `@mcp.tool` / `@app.command` / `@router.*` / `@app.*` exclusion pattern. No new tests needed — existing fixture coverage confirms the fix.
+
+### Version bump + orphan_detection PR merged to main
+
+- `d171787 chore` + `4956838 merge` — bumped `pyproject.toml` to v0.1.14 and merged PR #89 (orphan_detection policy + pytest entry-point fix, issue #17) to `main`.
 
 ### Orphan detection — fifth built-in arch-check policy (issue #17)
 
@@ -153,12 +168,12 @@ Beyond unit/integration tests, these were dogfooded against real systems:
 
 | Thing | Value |
 |---|---|
-| Current branch | `archon/task-feat-issue-17-orphan-detection` |
+| Current branch | `archon/task-feat-issue-22-arch-check-scope` |
 | Base branch | `main` |
-| Unpushed commits | 1 (`2dd72b7` — orphan_detection policy, pending PR) |
-| Open PR | Issue #17 orphan_detection branch pending PR. PR #85 (coupling_ceiling) merged to main. |
-| Working tree | 1 untracked file (`.claude/plans/feat-orphan-detection-policy.plan.md`) |
-| Test count | 341 passing + 1 deselected |
+| Unpushed commits | 1 (`9ebc0e4` — --scope flag, pending PR) |
+| Open PR | Issue #22 --scope flag branch pending PR. PR #89 (orphan_detection + pytest fix) merged to main. |
+| Working tree | 1 untracked file (`.claude/plans/arch-check-scope.plan.md`) |
+| Test count | 351 passing + 1 deselected |
 | Test runtime | ~16 s |
 | Byte-compile | Clean |
 | Last editable install | After `357ad03`. Re-run `cd codegraph && .venv/bin/pip install -e .` after any `pyproject.toml` edit. |
@@ -432,6 +447,7 @@ Repo-local plans under `.claude/plans/`:
 - `pypi-propagation-delay.plan.md` — shipped as `dd17072`.
 - `coupling-ceiling-policy.plan.md` — shipped as `4213450`.
 - `feat-orphan-detection-policy.plan.md` — shipped as `2dd72b7`.
+- `arch-check-scope.plan.md` — shipped as `9ebc0e4`.
 
 Older plans (not in repo): `sunny-giggling-moon.md` (the MCP retriever batch), `framework-detector-port.md`. These live in `~/.claude/plans/` and get overwritten on each `/plan` session unless preserved manually.
 
@@ -491,7 +507,7 @@ asking. Do not merge the open PR #8 without asking.
 | `loader.py` | Neo4j batch writer, constraints, indexes, `LoadStats` | ~815 |
 | `schema.py` | Node + edge dataclasses shared across parser → loader (+ shared test-pairing constants) | ~390 |
 | `config.py` | `codegraph.toml` / `pyproject.toml` config loader | ~190 |
-| `arch_check.py` | Architecture-conformance runner + 5 built-in policies + custom policy support | ~360 |
+| `arch_check.py` | Architecture-conformance runner + 5 built-in policies + `--scope` path-prefix filtering + custom policy support | ~420 |
 | `arch_config.py` | `.arch-policies.toml` parser → typed `ArchConfig` | ~320 |
 | `ignore.py` | `.codegraphignore` parser + `IgnoreFilter` | ~180 |
 | `framework.py` | Per-package framework detection (`FrameworkDetector`) | ~510 |
@@ -518,11 +534,11 @@ asking. Do not merge the open PR #8 without asking.
 | `test_resolver_bugs.py` | 13 | Resolver edge-case regression tests |
 | `test_loader_partitioning.py` | 3 | Function DECORATED_BY routing |
 | `test_loader_pairing.py` | 6 | TS + Python test-file pairing |
-| `test_arch_check.py` | 26 | Policies + orchestrator + custom policy runner (including coupling_ceiling + orphan_detection) |
+| `test_arch_check.py` | 35 | Policies + orchestrator + custom policy runner (including coupling_ceiling + orphan_detection + --scope filtering) |
 | `test_arch_config.py` | 37 | `.arch-policies.toml` parser (built-ins + custom + validation errors + schema_version + coupling_ceiling + orphan_detection config) |
 | `test_init.py` | 19 | Scaffolder helpers (detection, prompts, render, write, container name uniqueness) |
 | `test_init_integration.py` | 2 (1 slow) | End-to-end scaffold + optional Docker |
-| **Total** | **341** | |
+| **Total** | **351** | |
 
 ### Key decisions recorded in commit messages
 
@@ -550,6 +566,8 @@ Grep commit bodies for rationale:
 - Why `orphan_detection` reuses the `/dead-code` Cypher verbatim rather than writing a new query (the slash command already encodes the correct framework-entry-point exclusion list — `@mcp.tool`, `@app.command`, `@pytest.fixture`, `@router.*`, `@app.*`; reusing it keeps the policy and the interactive command consistent) → `2dd72b7`
 - Why `CALL {}` was changed to `CALL () {}` (Neo4j 5.x deprecated the form without parentheses; the new form is required in Neo4j 6.x and the warning was appearing in test output) → `2dd72b7`
 - Why `kinds` defaults to all four types rather than just `["function", "class"]` (the policy is meant to surface all unreachable code; users who want narrower coverage explicitly opt in via config; rejecting an empty list rather than silently defaulting is consistent with `max_imports ≥ 1`) → `2dd72b7`
+- Why `--scope` does not override an explicit `orphan_detection.path_prefix` in `.arch-policies.toml` (`path_prefix` in config is a deliberate, committed choice; `--scope` is a convenience CLI override that should not silently clobber committed policy config; if the user wants `--scope` to control orphan scoping they leave `path_prefix` unset in the TOML) → `9ebc0e4`
+- Why custom `[[policies.custom]]` Cypher is excluded from `--scope` auto-scoping (the user writes that Cypher directly; auto-injecting a WHERE clause into arbitrary Cypher could break syntax or semantics; the user who cares about scoping their custom policies already controls the query) → `9ebc0e4`
 
 ### Git remotes
 
