@@ -2,13 +2,13 @@
 
 > **Purpose of this document.** Capture enough context for a fresh agent session (or a human returning after time away) to continue work on codegraph without re-deriving state from scratch. Separate from the user-facing roadmap bullets in `README.md`, which stay short and pitch-oriented.
 >
-> **Last updated:** 2026-04-18 after commits `2391bfc` → `61de3b1` (version bumped to 0.1.30; PR #132 merged (issue #124 housekeeping); `.github/pull_request_template.md` created to address issue #131 — auto-closes linked issues on merge).
+> **Last updated:** 2026-04-18 after commits `2efe9b7` → `59c916a` (version bumped to 0.1.31; PR #134 merged (issue #131); install-test Stage 2 improved: exponential backoff + scope-filter skip guard).
 
 ---
 
 ## TL;DR — where we are
 
-- **Branch:** `archon/task-fix-issue-131`. Created `.github/pull_request_template.md` to address issue #131 — a 13-line template with a pre-filled `Closes #` line, `## Summary` section, and a 3-item checklist (conventional commits, pytest, arch-check). GitHub will now auto-close linked issues when a PR using this template is merged. No code changes. PR #132 merged to main (issue #124 housekeeping); version bumped to 0.1.30.
+- **Branch:** `archon/task-fix-issue-133`. Improved `.claude/commands/test.md` Stage 2 (install test): exponential backoff (15s → 30s across two retries, down from fixed 30s × 3) and a scope-filter skip guard so `/test unit` or `/test leytongo` skips the slow PyPI install stage. PR #134 merged to main (issue #131 — PR template); version bumped to 0.1.31.
 - **Tests:** 448 passing + 1 deselected (Docker-slow integration test), 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
 - **Graph indexed:** Twenty CRM is currently loaded into the local Neo4j container at `bolt://localhost:7688` (13,473 files, 2,559 classes, 6,088 methods, 5,562 CALLS, 6,708 hook usages, 4,593 RENDERS).
 - **MCP server:** 13 read-only tools + **2 write tools** (`wipe_graph`, `reindex_file`) gated by `--allow-write` flag + **29 prompt templates** (all Cypher blocks from `queries.md` auto-registered via `_register_query_prompts()`). `codegraph-mcp` console script registered. Smoke-tested via raw JSON-RPC.
@@ -21,9 +21,13 @@
 
 ---
 
-## Shipped since the last roadmap update (commit `2391bfc`)
+## Shipped since the last roadmap update (commit `d4a50c3`)
 
 ```
+59c916a docs(test): fix install-test retry documentation and add scope filter
+2efe9b7 Merge pull request #134 from cognitx-leyton/archon/task-fix-issue-131
+ab2a0a1 chore: bump version to 0.1.31
+d4a50c3 docs(roadmap): update session handoff
 61de3b1 docs(github): add pull request template
 a4fa7d8 Merge pull request #132 from cognitx-leyton/archon/task-fix-issue-124
 b876054 chore: bump version to 0.1.30
@@ -137,7 +141,15 @@ edb8cca feat(parser):   extract docstrings, params, and return types for Python
 09822fa docs(roadmap):  session handoff document for continuing work across agents
 ```
 
-Twenty-five sessions' worth of work grouped by theme:
+Twenty-six sessions' worth of work grouped by theme:
+
+### Install-test exponential backoff + scope skip guard (issue #133, PR #134 merged as #135)
+
+- `59c916a docs(test)` — `.claude/commands/test.md` Stage 2 (PyPI install test) received two independent improvements. **(1) Exponential backoff:** `BACKOFF=30` (fixed) replaced with `BACKOFF=15` (initial) + `BACKOFF=$((BACKOFF * 2))` after each `sleep`, giving a 15s → 30s retry sequence (two sleeps, total 45s max wait vs. 90s before). Pass criteria text updated to "exponential backoff (15s, 30s)". **(2) Scope-filter skip guard:** a `SCOPE="${ARGUMENTS:-all}"` check at the top of the bash block detects when the user runs `/test unit`, `/test self-index`, or `/test leytongo` — any scope that is not `install` or `all` — and emits `SKIP: install test (scope is '...', not 'install' or 'all')` before exiting 0. A tip was added after the pass criteria: "Run `/test unit` to skip the install test during local development." Both changes confined to Stage 2 only; all regression guards preserved (`exit 1`, `--no-cache-dir`, `pip show` version check). 448 tests unchanged.
+
+- `2efe9b7 merge` — PR #134 (branch `archon/task-fix-issue-131`, PR template) merged to `main`.
+
+- `ab2a0a1 chore` — `pyproject.toml` version bumped to v0.1.31.
 
 ### PR template + version bump to 0.1.30 (issue #131, PR #132)
 
