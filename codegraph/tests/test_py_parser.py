@@ -92,13 +92,13 @@ def test_schema_py_defines_class_edges():
 
 
 def test_mcp_py_tool_decorators():
-    """mcp.py ships 13 `@mcp.tool()` tools (10 legacy + describe_function + calls_from + callers_of)."""
+    """mcp.py ships 15 `@mcp.tool()` tools (13 read-only + wipe_graph + reindex_file)."""
     result = _parse(CODEGRAPH_PKG / "mcp.py")
     tool_edges = [
         e for e in result.edges
         if e.kind == DECORATED_BY and "mcp.tool" in e.dst_id
     ]
-    assert len(tool_edges) == 13
+    assert len(tool_edges) == 15
 
 
 def test_mcp_py_module_functions():

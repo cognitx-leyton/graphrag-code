@@ -67,7 +67,7 @@ def test_decorated_by_partitions_function_src_ids(captured_runs):
 
 
 def test_decorated_by_func_smoke_from_parser():
-    """Parsing ``mcp.py`` must yield exactly 13 function-level decorators.
+    """Parsing ``mcp.py`` must yield exactly 15 function-level decorators.
 
     All are ``@mcp.tool()`` on module-level tool functions. If this count
     changes, ``mcp.py`` grew a new tool — update this assertion and ROADMAP.
@@ -80,7 +80,7 @@ def test_decorated_by_func_smoke_from_parser():
         e for e in result.edges
         if e.kind == DECORATED_BY and e.src_id.startswith("func:")
     ]
-    assert len(func_decs) == 13
+    assert len(func_decs) == 15
     assert all(e.dst_id == "dec:mcp.tool()" for e in func_decs)
 
 

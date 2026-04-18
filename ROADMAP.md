@@ -2,17 +2,17 @@
 
 > **Purpose of this document.** Capture enough context for a fresh agent session (or a human returning after time away) to continue work on codegraph without re-deriving state from scratch. Separate from the user-facing roadmap bullets in `README.md`, which stay short and pitch-oriented.
 >
-> **Last updated:** 2026-04-18 after commits `9d05a44` → `06e9873` (incremental re-indexing via `--since` shipped as issue #13; PR #95 merged to main; version bumped to 0.1.16).
+> **Last updated:** 2026-04-18 after commits `6d9c028` → `daae936` (MCP write tools shipped as issue #14; incremental re-indexing PR #99 merged to main; version bumped to 0.1.17).
 
 ---
 
 ## TL;DR — where we are
 
-- **Branch:** `archon/task-feat-issue-13-incremental-reindex`. Working tree has one untracked plan file (`.claude/plans/incremental-reindex.plan.md`). Incremental re-indexing shipped as `06e9873`; PR #95 (inline suppression, issue #23) merged to main.
-- **Tests:** 396 passing + 1 deselected (Docker-slow integration test), 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
+- **Branch:** `archon/task-feat-issue-14-mcp-write-tools`. MCP write tools shipped as `daae936`; PR #99 (incremental re-indexing, issue #13) merged to main.
+- **Tests:** 414 passing + 1 deselected (Docker-slow integration test), 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
 - **Graph indexed:** Twenty CRM is currently loaded into the local Neo4j container at `bolt://localhost:7688` (13,473 files, 2,559 classes, 6,088 methods, 5,562 CALLS, 6,708 hook usages, 4,593 RENDERS).
-- **MCP server:** 13 read-only tools live + **29 prompt templates** (all Cypher blocks from `queries.md` auto-registered via `_register_query_prompts()`). `codegraph-mcp` console script registered. Smoke-tested via raw JSON-RPC.
-- **Package:** `cognitx-codegraph` v0.1.16 in `pyproject.toml`. Wheel + sdist build cleanly. **Not yet on PyPI** — needs one-time operational setup (Trusted Publisher registration). `release.yml` now waits for propagation and smoke-tests the published version.
+- **MCP server:** 13 read-only tools + **2 write tools** (`wipe_graph`, `reindex_file`) gated by `--allow-write` flag + **29 prompt templates** (all Cypher blocks from `queries.md` auto-registered via `_register_query_prompts()`). `codegraph-mcp` console script registered. Smoke-tested via raw JSON-RPC.
+- **Package:** `cognitx-codegraph` v0.1.17 in `pyproject.toml`. Wheel + sdist build cleanly. **Not yet on PyPI** — needs one-time operational setup (Trusted Publisher registration). `release.yml` now waits for propagation and smoke-tests the published version.
 - **CI:** `.github/workflows/arch-check.yml` — every PR to `main` spins up Neo4j, indexes, runs `codegraph arch-check`, fails on architecture violations. Verified live on PR #8 (42s, exit 0).
 - **Onboarding:** `codegraph init` scaffolds everything needed to dogfood codegraph in any repo. Live-tested against 3 fixtures including the real Twenty monorepo (13k files indexed end-to-end).
 - **Python Stage 2:** FastAPI / Flask / Django / SQLAlchemy framework detection + `:Endpoint` nodes. `/trace-endpoint` now works against Python repos.
@@ -20,9 +20,13 @@
 
 ---
 
-## Shipped since the last roadmap update (commit `9d05a44`)
+## Shipped since the last roadmap update (commit `6d9c028`)
 
 ```
+daae936 feat(mcp): add write tools for reindexing and edge loading
+aa48cd0 Merge pull request #99 from cognitx-leyton/archon/task-feat-issue-13-incremental-reindex
+149b955 chore:          bump version to 0.1.17
+6d9c028 docs(roadmap):  update session handoff
 06e9873 feat(incremental): add --since flag for incremental re-indexing
 7327e46 Merge pull request #95 from cognitx-leyton/archon/task-feat-issue-23-arch-check-suppression
 87b6997 chore:          bump version to 0.1.16
@@ -81,7 +85,13 @@ edb8cca feat(parser):   extract docstrings, params, and return types for Python
 09822fa docs(roadmap):  session handoff document for continuing work across agents
 ```
 
-Twelve sessions' worth of work grouped by theme:
+Thirteen sessions' worth of work grouped by theme:
+
+### MCP write tools — `wipe_graph` + `reindex_file` behind `--allow-write` (issue #14)
+
+- `daae936 feat(mcp)` — `mcp.py` gains two write tools gated by a module-level `_allow_write: bool` flag (set via `--allow-write` CLI argument parsed with `argparse` after FastMCP startup): `wipe_graph(confirm=False)` (destructive wipe, requires `confirm=True` in addition to `--allow-write`; uses a `WRITE_ACCESS` Neo4j session) and `reindex_file(path, package=None)` (single-file re-index that validates file extension, auto-resolves package from graph if not provided, checks file exists on disk, detects test files by naming convention, parses with `PyParser` or `TsParser`, calls `delete_file_subgraph()` to cascade-clean the old subgraph, then loads new File/Class/Function/Method/Interface/Endpoint/Column/GraphQLOperation/Atom nodes + intra-file edges + DECORATED_BY edges via whitelist-validated edge kinds to prevent Cypher injection). A `_WRITE_GATE_MSG` constant provides a consistent error for both tools when `--allow-write` is absent. Module docstring updated with `--allow-write` docs and `mcpServers` config example. `main()` updated to parse `--allow-write` via `argparse`. **18 new tests** in `test_mcp.py` covering: write-session mode, gate blocking for both tools, CLI flag parsing, `wipe_graph` requires-confirm + happy-path + error surfaces, `reindex_file` bad-extension + blocked + no-package + package-lookup-from-graph + happy-path + file-not-on-disk + error surfaces + DECORATED_BY edge loading + Neo4j error propagation on package lookup. Two tests in `test_loader_partitioning.py` and `test_py_parser.py` updated for decorator count (13 → 15). Test count: 396 → 414.
+
+- `aa48cd0 merge` + `149b955 chore` — PR #99 (incremental re-indexing, issue #13) merged to `main`; version bumped to v0.1.17.
 
 ### Incremental re-indexing — `--since` flag for fast incremental updates (issue #13)
 
@@ -193,12 +203,12 @@ Beyond unit/integration tests, these were dogfooded against real systems:
 
 | Thing | Value |
 |---|---|
-| Current branch | `archon/task-feat-issue-13-incremental-reindex` |
+| Current branch | `archon/task-feat-issue-14-mcp-write-tools` |
 | Base branch | `main` |
-| Unpushed commits | 1 (`06e9873` — incremental re-indexing, pending PR) |
-| Open PR | Issue #13 incremental branch pending PR. PR #95 (inline suppression) merged to main. |
-| Working tree | 1 untracked file (`.claude/plans/incremental-reindex.plan.md`) |
-| Test count | 396 passing + 1 deselected |
+| Unpushed commits | 1 (`daae936` — MCP write tools, pending PR) |
+| Open PR | Issue #14 write-tools branch pending PR. PR #99 (incremental re-indexing) merged to main. |
+| Working tree | 1 untracked file (`.claude/plans/mcp-write-tools.plan.md`) |
+| Test count | 414 passing + 1 deselected |
 | Test runtime | ~16 s |
 | Byte-compile | Clean |
 | Last editable install | After `357ad03`. Re-run `cd codegraph && .venv/bin/pip install -e .` after any `pyproject.toml` edit. |
@@ -363,13 +373,7 @@ The ranking assumes the same `plan → implement → e2e validate → commit` cy
 
 ~~#### B3. Incremental re-indexing (`codegraph index --since HEAD~N`)~~ **SHIPPED** (`06e9873`)
 
-#### B4. MCP write tools behind `--allow-write`
-
-**What:** `reindex_file(path)` + `wipe_graph()` tools, gated by a `--allow-write` CLI flag on `codegraph-mcp`.
-
-**Why:** Agents can refresh the graph after editing without shelling out for 3 min. Now that B3 is done (`delete_file_subgraph` + `load(touched_files=...)` exist), this is ~100 LOC of wiring.
-
-**Scope:** ~100 LOC. Separate `WRITE_ACCESS` session for these tools only. B3 is a direct dependency — now unblocked.
+~~#### B4. MCP write tools behind `--allow-write`~~ **SHIPPED** (`daae936`)
 
 #### B5. Agent-native RAG — graph-selected context injection
 
@@ -467,6 +471,7 @@ Repo-local plans under `.claude/plans/`:
 - `arch-check-scope.plan.md` — shipped as `9ebc0e4`.
 - `arch-check-suppression.plan.md` — shipped as `9d05a44`.
 - `incremental-reindex.plan.md` — shipped as `06e9873`.
+- `mcp-write-tools.plan.md` — shipped as `daae936`.
 
 Older plans (not in repo): `sunny-giggling-moon.md` (the MCP retriever batch), `framework-detector-port.md`. These live in `~/.claude/plans/` and get overwritten on each `/plan` session unless preserved manually.
 
@@ -530,7 +535,7 @@ asking. Do not merge the open PR #8 without asking.
 | `arch_config.py` | `.arch-policies.toml` parser → typed `ArchConfig` (incl. `Suppression` dataclass) | ~360 |
 | `ignore.py` | `.codegraphignore` parser + `IgnoreFilter` | ~180 |
 | `framework.py` | Per-package framework detection (`FrameworkDetector`) | ~510 |
-| `mcp.py` | FastMCP stdio server with 13 tools + 29 prompt templates | ~610 |
+| `mcp.py` | FastMCP stdio server with 15 tools (13 read-only + `wipe_graph` + `reindex_file` behind `--allow-write`) + 29 prompt templates | ~720 |
 | `ownership.py` | Git log → author mapping onto graph nodes | ~130 |
 | `validate.py` | Post-load sanity-check suite | ~400 |
 | `repl.py` | Interactive Cypher REPL (+ `--since` pass-through in `_cmd_index`) | ~328 |
@@ -545,7 +550,7 @@ asking. Do not merge the open PR #8 without asking.
 | `test_ignore.py` | 19 | `ignore.py` + cli helpers |
 | `test_framework.py` | 18 | `framework.py` (TS) |
 | `test_py_framework.py` | 13 | `framework.py` (Python Stage 2) |
-| `test_mcp.py` | 109 | `mcp.py` (13 tools + 29 prompts + describe_schema + query_graph + depth/bool validation + full coverage for calls_from, callers_of, describe_function) |
+| `test_mcp.py` | 127 | `mcp.py` (15 tools: 13 read-only + `wipe_graph` + `reindex_file` + 29 prompts + describe_schema + query_graph + depth/bool validation + full coverage for calls_from, callers_of, describe_function + write-tool gating + DECORATED_BY edge loading) |
 | `test_py_parser.py` | 28 | `py_parser.py` (Stage 1 parsing) |
 | `test_py_parser_calls.py` | 12 | Method-body CALLS emission |
 | `test_py_parser_endpoints.py` | 18 | Python Stage 2 endpoint parsing |
@@ -558,7 +563,7 @@ asking. Do not merge the open PR #8 without asking.
 | `test_init.py` | 19 | Scaffolder helpers (detection, prompts, render, write, container name uniqueness) |
 | `test_init_integration.py` | 2 (1 slow) | End-to-end scaffold + optional Docker |
 | `test_incremental.py` | 21 | `delete_file_subgraph`, `_file_from_id`, `load(touched_files=...)`, `_git_changed_files`, end-to-end `_run_index --since` wiring |
-| **Total** | **396** | |
+| **Total** | **414** | |
 
 ### Key decisions recorded in commit messages
 
@@ -595,6 +600,11 @@ Grep commit bodies for rationale:
 - Why `delete_file_subgraph` uses 10 explicit Cypher steps rather than a single `DETACH DELETE` on the File node (`DETACH DELETE` on File removes edges but leaves child-of-class nodes — Endpoint, GraphQLOperation, Column — orphaned as islands with no incoming edges; the 10-step cascade explicitly targets each child type before deleting its parent) → `06e9873`
 - Why `_file_from_id` uses `split("@")[1].split("#")[0]` for endpoint/gqlop IDs (those ID formats are `endpoint:{method}:{path}@{file}#{handler}` and `gqlop:{type}:{name}@{file}#{handler}` — `@` separates the structural prefix from the file path, and `#` separates the file from the handler name) → `06e9873`
 - Why `--since` implies `--no-wipe` and skips ownership (wiping then re-indexing defeats the purpose of incremental; ownership requires git-log over all files and is expensive — skipping it on incremental runs keeps the fast-path fast) → `06e9873`
+- Why `--allow-write` is an `argparse` flag parsed after FastMCP startup rather than an env var or `typer.Option` (FastMCP's `main()` owns the event loop and doesn't expose a pre-run hook; `argparse` lets us parse `sys.argv` before handing control to FastMCP without forking or wrapping the process) → `daae936`
+- Why `wipe_graph` requires both `--allow-write` AND `confirm=True` (two independent safeguards: the flag is set at server startup by an operator, `confirm=True` must come from the calling agent at request time — operator permission ≠ intent; either alone is insufficient for a destructive wipe) → `daae936`
+- Why `reindex_file` validates `edge.kind` against an allowlist before Cypher interpolation (edge kinds come from parsed schema dataclass strings, but validating them prevents injection if a bug or future parser change produced unexpected values; the allowlist is all known `schema.py` edge constants) → `daae936`
+- Why DECORATED_BY edges in `reindex_file` match Decorator nodes by `{name: $name}` not `{id: $dst}` (Decorator nodes have a `name` property but their ID is not stored as a standalone property — it's synthesised from parent ID; matching by name is stable and correct; the src_id prefix routes to the right parent label: `class:` → Class, `func:` → Function, `method:` → Method) → `daae936`
+- Why `reindex_file` only loads intra-file edges, not cross-file edges (cross-file edges require resolving imports against the full graph; doing that inside a single-file tool would require re-running the full resolver, which is a 30s+ operation on large repos; cross-file edges can be refreshed by running a full incremental re-index via `--since`) → `daae936`
 - Why `_git_changed_files` treats renamed files as delete-old + add-new (the old path's subgraph must be cleaned so its nodes don't become orphaned; the new path is re-parsed fresh; treating a rename as a single "move" would require a graph rename operation that doesn't exist) → `06e9873`
 - Why `load(touched_files=...)` always writes packages even in incremental mode (Package nodes encode framework-level metadata shared across files; filtering them out to save time could leave the Package table stale if the only changed file was the one that determined the framework) → `06e9873`
 
