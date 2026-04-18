@@ -672,9 +672,9 @@ def test_run_arch_check_passes_scope_to_policies(monkeypatch):
     original_run_all = arch_check._run_all
     received_scope = []
 
-    def spy_run_all(driver, config, scope=None):
+    def spy_run_all(driver, config, scope=None, sample_limit=10):
         received_scope.append(scope)
-        return original_run_all(driver, config, scope)
+        return original_run_all(driver, config, scope, sample_limit)
 
     monkeypatch.setattr(arch_check, "_run_all", spy_run_all)
 
@@ -1182,3 +1182,65 @@ def test_arch_check_cli_no_config_no_scope_passes_none(monkeypatch):
     result = CliRunner().invoke(app, ["arch-check"])
     assert result.exit_code == 0
     assert captured["scope"] is None
+
+
+# ── sample_limit threading ──────────────────────────────────────────
+
+
+def test_sample_limit_threaded_to_policy_queries(monkeypatch):
+    """run_arch_check with sample_limit=25 passes limit=25 to Neo4j queries."""
+    captured_limits: list[int] = []
+
+    def resolver(cypher: str, **params):
+        if "limit" in params:
+            captured_limits.append(params["limit"])
+        if "count(DISTINCT path)" in cypher:
+            return [{"v": 0}]
+        if "count(*)" in cypher:
+            return [{"v": 0}]
+        if "count(DISTINCT ctrl)" in cypher:
+            return [{"v": 0}]
+        if "count(f) AS v" in cypher:
+            return [{"v": 0}]
+        return []
+
+    fake_driver = _FakeDriver(resolver)
+    monkeypatch.setattr(arch_check.GraphDatabase, "driver", lambda uri, auth: fake_driver)
+
+    config = ArchConfig(sample_limit=25)
+    run_arch_check(
+        "bolt://fake:7687", "neo4j", "pw", console=None, config=config,
+    )
+    assert captured_limits, "expected at least one limit param captured"
+    assert all(lim == 25 for lim in captured_limits), (
+        f"expected all limits to be 25, got {captured_limits}"
+    )
+
+
+def test_render_incomplete_warning_references_config():
+    """Warning message references settings.sample_limit, not SAMPLE_LIMIT."""
+    from io import StringIO
+
+    from rich.console import Console
+
+    report = ArchReport(
+        policies=[
+            PolicyResult(
+                name="import_cycles",
+                passed=False,
+                violation_count=15,
+                sample=[{"cycle": ["a.py", "b.py", "a.py"], "hops": 2}],
+                suppressed_count=5,
+                suppressed_sample=[
+                    {"cycle": ["c.py", "d.py", "c.py"], "hops": 2},
+                ],
+                incomplete_suppression_coverage=True,
+            ),
+        ],
+    )
+    buf = StringIO()
+    _render(Console(file=buf, force_terminal=True, width=200), report)
+    output = buf.getvalue()
+    assert "settings.sample_limit" in output
+    assert ".arch-policies.toml" in output
+    assert "SAMPLE_LIMIT" not in output
