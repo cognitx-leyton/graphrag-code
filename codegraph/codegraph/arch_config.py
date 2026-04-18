@@ -11,6 +11,9 @@ TOML schema (all sections optional):
     [meta]
     schema_version = 1
 
+    [settings]
+    sample_limit = 50          # max violation rows fetched per policy (default 10)
+
     [policies.import_cycles]
     enabled  = true
     min_hops = 2
@@ -153,6 +156,7 @@ class ArchConfig:
     custom: list[CustomPolicy] = field(default_factory=list)
     suppressions: list[Suppression] = field(default_factory=list)
     schema_version: int = 1
+    sample_limit: int = 10
 
 
 # ── Loader ───────────────────────────────────────────────────
@@ -197,6 +201,23 @@ def load_arch_config(repo_root: Path, path: Optional[Path] = None) -> ArchConfig
             f"Please upgrade: pip install --upgrade codegraph"
         )
 
+    # ── [settings] section ──
+    settings = raw.get("settings", {})
+    if not isinstance(settings, dict):
+        raise ArchConfigError(
+            f"{config_path}: [settings] must be a table, got {type(settings).__name__}"
+        )
+    raw_limit = settings.get("sample_limit", 10)
+    if isinstance(raw_limit, bool) or not isinstance(raw_limit, int):
+        raise ArchConfigError(
+            f"{config_path}: settings.sample_limit must be an integer"
+        )
+    sample_limit = raw_limit
+    if sample_limit < 1:
+        raise ArchConfigError(
+            f"{config_path}: settings.sample_limit must be >= 1 (got {sample_limit})"
+        )
+
     # ── [policies] section ──
     policies = raw.get("policies", {})
     if not isinstance(policies, dict):
@@ -213,6 +234,7 @@ def load_arch_config(repo_root: Path, path: Optional[Path] = None) -> ArchConfig
         custom=_parse_custom(policies.get("custom", []), config_path),
         suppressions=_parse_suppressions(raw.get("suppress", []), config_path),
         schema_version=schema_version,
+        sample_limit=sample_limit,
     )
 
 

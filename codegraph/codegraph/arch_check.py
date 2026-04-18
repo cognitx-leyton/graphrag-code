@@ -45,9 +45,6 @@ from .arch_config import (
 )
 
 
-# Sample-size cap per policy — keeps the report skimmable.
-SAMPLE_LIMIT = 10
-
 
 def _scope_filter(
     var: str, prop: str, scope: list[str] | None,
@@ -133,15 +130,17 @@ def run_arch_check(
     if config is None:
         config = load_arch_config(repo_root or Path.cwd())
 
+    sample_limit = config.sample_limit
+
     driver = GraphDatabase.driver(uri, auth=(user, password))
     try:
-        policies = _run_all(driver, config, scope)
+        policies = _run_all(driver, config, scope, sample_limit)
     finally:
         driver.close()
 
     stale: list[dict] = []
     if config.suppressions:
-        policies, stale = _apply_suppressions(policies, config.suppressions)
+        policies, stale = _apply_suppressions(policies, config.suppressions, sample_limit)
 
     report = ArchReport(policies=policies, stale_suppressions=stale)
     if console is not None:
@@ -151,38 +150,39 @@ def run_arch_check(
 
 def _run_all(
     driver: Driver, config: ArchConfig, scope: list[str] | None = None,
+    sample_limit: int = 10,
 ) -> list[PolicyResult]:
     """Evaluate every policy in a stable order. Disabled policies emit a marker."""
     out: list[PolicyResult] = []
 
     if config.import_cycles.enabled:
-        out.append(_check_import_cycles(driver, config.import_cycles, scope))
+        out.append(_check_import_cycles(driver, config.import_cycles, scope, sample_limit))
     else:
         out.append(_disabled("import_cycles"))
 
     if config.cross_package.enabled:
-        out.append(_check_cross_package(driver, config.cross_package, scope))
+        out.append(_check_cross_package(driver, config.cross_package, scope, sample_limit))
     else:
         out.append(_disabled("cross_package"))
 
     if config.layer_bypass.enabled:
-        out.append(_check_layer_bypass(driver, config.layer_bypass, scope))
+        out.append(_check_layer_bypass(driver, config.layer_bypass, scope, sample_limit))
     else:
         out.append(_disabled("layer_bypass"))
 
     if config.coupling_ceiling.enabled:
-        out.append(_check_coupling_ceiling(driver, config.coupling_ceiling, scope))
+        out.append(_check_coupling_ceiling(driver, config.coupling_ceiling, scope, sample_limit))
     else:
         out.append(_disabled("coupling_ceiling"))
 
     if config.orphan_detection.enabled:
-        out.append(_check_orphans(driver, config.orphan_detection, scope))
+        out.append(_check_orphans(driver, config.orphan_detection, scope, sample_limit))
     else:
         out.append(_disabled("orphan_detection"))
 
     for custom in config.custom:
         if custom.enabled:
-            out.append(_check_custom(driver, custom))
+            out.append(_check_custom(driver, custom, sample_limit))
         else:
             out.append(_disabled(custom.name))
 
@@ -203,6 +203,7 @@ def _disabled(name: str) -> PolicyResult:
 
 def _check_import_cycles(
     driver: Driver, cfg: ImportCyclesConfig, scope: list[str] | None = None,
+    sample_limit: int = 10,
 ) -> PolicyResult:
     """Detect file-level IMPORTS cycles of configurable length."""
     hops = f"*{cfg.min_hops}..{cfg.max_hops}"
@@ -223,7 +224,7 @@ def _check_import_cycles(
     )
     with driver.session() as s:
         total = int(s.run(count_cypher, **scope_params).single()["v"] or 0)
-        sample = [dict(r) for r in s.run(sample_cypher, limit=SAMPLE_LIMIT, **scope_params)]
+        sample = [dict(r) for r in s.run(sample_cypher, limit=sample_limit, **scope_params)]
     return PolicyResult(
         name="import_cycles",
         passed=(total == 0),
@@ -235,6 +236,7 @@ def _check_import_cycles(
 
 def _check_cross_package(
     driver: Driver, cfg: CrossPackageConfig, scope: list[str] | None = None,
+    sample_limit: int = 10,
 ) -> PolicyResult:
     """Detect imports that cross a forbidden package boundary."""
     scope_frag, scope_params = _scope_filter("a", "path", scope)
@@ -252,7 +254,7 @@ def _check_cross_package(
                 a=pair.importer, b=pair.importee, **scope_params,
             ).single()["v"] or 0)
             total += count
-            if count and len(detected) < SAMPLE_LIMIT:
+            if count and len(detected) < sample_limit:
                 rows = list(s.run(
                     "MATCH (a:File)-[:IMPORTS]->(b:File) "
                     "WHERE a.package = $a AND b.package = $b"
@@ -260,7 +262,7 @@ def _check_cross_package(
                     "RETURN a.path AS importer, b.path AS importee "
                     "LIMIT $limit",
                     a=pair.importer, b=pair.importee,
-                    limit=SAMPLE_LIMIT - len(detected), **scope_params,
+                    limit=sample_limit - len(detected), **scope_params,
                 ))
                 for r in rows:
                     detected.append({
@@ -281,6 +283,7 @@ def _check_cross_package(
 
 def _check_layer_bypass(
     driver: Driver, cfg: LayerBypassConfig, scope: list[str] | None = None,
+    sample_limit: int = 10,
 ) -> PolicyResult:
     """Controllers reaching ``*Repository`` without traversing ``*Service``."""
     labels_or = "|".join(cfg.controller_labels)
@@ -327,7 +330,7 @@ def _check_layer_bypass(
             sample_cypher,
             repo_suffix=cfg.repository_suffix,
             svc_suffix=cfg.service_suffix,
-            limit=SAMPLE_LIMIT,
+            limit=sample_limit,
             **scope_params,
         )]
     return PolicyResult(
@@ -344,6 +347,7 @@ def _check_layer_bypass(
 
 def _check_coupling_ceiling(
     driver: Driver, cfg: CouplingCeilingConfig, scope: list[str] | None = None,
+    sample_limit: int = 10,
 ) -> PolicyResult:
     """Flag files with more than ``cfg.max_imports`` distinct file-level imports."""
     scope_frag, scope_params = _scope_filter("f", "path", scope)
@@ -369,7 +373,7 @@ def _check_coupling_ceiling(
             count_cypher, threshold=cfg.max_imports, **scope_params,
         ).single()["v"] or 0)
         sample = [dict(r) for r in s.run(
-            sample_cypher, threshold=cfg.max_imports, limit=SAMPLE_LIMIT,
+            sample_cypher, threshold=cfg.max_imports, limit=sample_limit,
             **scope_params,
         )]
     return PolicyResult(
@@ -383,6 +387,7 @@ def _check_coupling_ceiling(
 
 def _check_orphans(
     driver: Driver, cfg: OrphanDetectionConfig, scope: list[str] | None = None,
+    sample_limit: int = 10,
 ) -> PolicyResult:
     """Flag functions/classes/atoms/endpoints with zero inbound references."""
     # Build sub-queries for each requested kind.
@@ -451,7 +456,7 @@ def _check_orphans(
         f"LIMIT $limit"
     )
 
-    params: dict = {"limit": SAMPLE_LIMIT}
+    params: dict = {"limit": sample_limit}
     if cfg.path_prefix:
         params["prefix"] = cfg.path_prefix
     params.update(scope_extra)
@@ -470,14 +475,14 @@ def _check_orphans(
     )
 
 
-def _check_custom(driver: Driver, custom: CustomPolicy) -> PolicyResult:
+def _check_custom(driver: Driver, custom: CustomPolicy, sample_limit: int = 10) -> PolicyResult:
     """Run a user-authored policy from :class:`CustomPolicy`."""
     with driver.session() as s:
         count_result = s.run(custom.count_cypher).single()
         total = int((count_result["v"] if count_result else 0) or 0)
         sample: list[dict] = []
         if total > 0:
-            sample = [dict(r) for r in s.run(custom.sample_cypher)][:SAMPLE_LIMIT]
+            sample = [dict(r) for r in s.run(custom.sample_cypher)][:sample_limit]
     return PolicyResult(
         name=custom.name,
         passed=(total == 0),
@@ -540,6 +545,7 @@ def _match_suppression_key(
 def _apply_suppressions(
     policies: list[PolicyResult],
     suppressions: list[Suppression],
+    sample_limit: int = 10,
 ) -> tuple[list[PolicyResult], list[dict]]:
     """Match suppressions against policy results.
 
@@ -602,10 +608,10 @@ def _apply_suppressions(
             name=p.name,
             passed=(new_violation_count == 0),
             violation_count=new_violation_count,
-            sample=kept[:SAMPLE_LIMIT],
+            sample=kept[:sample_limit],
             detail=p.detail,
             suppressed_count=suppressed_count,
-            suppressed_sample=suppressed[:SAMPLE_LIMIT],
+            suppressed_sample=suppressed[:sample_limit],
             incomplete_suppression_coverage=incomplete,
         ))
 
@@ -677,7 +683,7 @@ def _render(console: Console, report: ArchReport) -> None:
             console.print(
                 f"\n[yellow]\u26a0 {p.name}: {total_violations} violations found "
                 f"but only {sampled} sampled \u2014 suppression coverage is "
-                f"partial.\n  Increase SAMPLE_LIMIT or reduce violations to "
+                f"partial.\n  Increase settings.sample_limit in .arch-policies.toml or reduce violations to "
                 f"verify full suppression.[/]"
             )
 

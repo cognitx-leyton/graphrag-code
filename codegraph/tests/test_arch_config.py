@@ -53,6 +53,7 @@ def test_missing_file_returns_defaults(tmp_path: Path):
     assert cfg.orphan_detection.kinds == ["function", "class", "atom", "endpoint"]
     assert cfg.custom == []
     assert cfg.schema_version == 1
+    assert cfg.sample_limit == 10
 
 
 def test_empty_file_returns_defaults(tmp_path: Path):
@@ -517,4 +518,46 @@ reason = "   "
 def test_suppression_wrong_type_rejected(tmp_path: Path):
     _write(tmp_path, 'suppress = "not a list"\n')
     with pytest.raises(ArchConfigError, match="suppress must be an array of tables"):
+        load_arch_config(tmp_path)
+
+
+# ── Settings ──────────────────────────────────────────────────
+
+
+def test_default_sample_limit(tmp_path: Path):
+    _write(tmp_path, "")
+    cfg = load_arch_config(tmp_path)
+    assert cfg.sample_limit == 10
+
+
+def test_custom_sample_limit(tmp_path: Path):
+    _write(tmp_path, """
+[settings]
+sample_limit = 50
+""")
+    cfg = load_arch_config(tmp_path)
+    assert cfg.sample_limit == 50
+
+
+def test_sample_limit_below_1_rejected(tmp_path: Path):
+    _write(tmp_path, """
+[settings]
+sample_limit = 0
+""")
+    with pytest.raises(ArchConfigError, match="must be >= 1"):
+        load_arch_config(tmp_path)
+
+
+def test_settings_must_be_table(tmp_path: Path):
+    _write(tmp_path, 'settings = "wrong"\n')
+    with pytest.raises(ArchConfigError, match=r"\[settings\] must be a table"):
+        load_arch_config(tmp_path)
+
+
+def test_sample_limit_wrong_type_rejected(tmp_path: Path):
+    _write(tmp_path, """
+[settings]
+sample_limit = "ten"
+""")
+    with pytest.raises(ArchConfigError, match="must be an integer"):
         load_arch_config(tmp_path)
