@@ -83,6 +83,9 @@ Repository    = "https://github.com/cognitx-leyton/graphrag-code"
 Documentation = "https://github.com/cognitx-leyton/graphrag-code#readme"
 Issues        = "https://github.com/cognitx-leyton/graphrag-code/issues"
 
+[tool.codegraph]
+packages = ["codegraph", "tests"]
+
 [tool.setuptools.packages.find]
 where   = ["."]
 include = ["codegraph*"]
