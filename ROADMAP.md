@@ -2,13 +2,13 @@
 
 > **Purpose of this document.** Capture enough context for a fresh agent session (or a human returning after time away) to continue work on codegraph without re-deriving state from scratch. Separate from the user-facing roadmap bullets in `README.md`, which stay short and pitch-oriented.
 >
-> **Last updated:** 2026-04-18 after commits `32839a8` → `d04af53` (configurable `sample_limit` PR #118 merged to main; version bumped to 0.1.23; fixed hardcoded `"policies."` prefix in typed-getter helpers as issue #117).
+> **Last updated:** 2026-04-18 after commits `40f6f58` → `e40fcec` (fixed missing `[tool.codegraph]` config in `pyproject.toml` so auto-scope activates for local dev — issue #119; PR #120 merged to main; version bumped to 0.1.24).
 
 ---
 
 ## TL;DR — where we are
 
-- **Branch:** `archon/task-fix-issue-117`. Fixed hardcoded `"policies."` prefix in `_bool`/`_int`/`_str` typed-getter helpers in `arch_config.py` (issue #117), shipped as `d04af53`. Configurable `sample_limit` PR #118 merged to main; version bumped to 0.1.23.
+- **Branch:** `archon/task-fix-issue-119`. Fixed missing `[tool.codegraph]` section in `codegraph/pyproject.toml` so auto-scope activates for local dev invocations of `codegraph arch-check` (issue #119), shipped as `e40fcec`. PR #120 (fully-qualified paths in typed-getter validation errors, issue #117) merged to main; version bumped to 0.1.24.
 - **Tests:** 448 passing + 1 deselected (Docker-slow integration test), 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
 - **Graph indexed:** Twenty CRM is currently loaded into the local Neo4j container at `bolt://localhost:7688` (13,473 files, 2,559 classes, 6,088 methods, 5,562 CALLS, 6,708 hook usages, 4,593 RENDERS).
 - **MCP server:** 13 read-only tools + **2 write tools** (`wipe_graph`, `reindex_file`) gated by `--allow-write` flag + **29 prompt templates** (all Cypher blocks from `queries.md` auto-registered via `_register_query_prompts()`). `codegraph-mcp` console script registered. Smoke-tested via raw JSON-RPC.
@@ -21,9 +21,13 @@
 
 ---
 
-## Shipped since the last roadmap update (commit `32839a8`)
+## Shipped since the last roadmap update (commit `40f6f58`)
 
 ```
+e40fcec fix(arch-check): set correct package paths in pyproject.toml auto-scope
+8df3c62 Merge pull request #120 from cognitx-leyton/archon/task-fix-issue-117
+8898ae2 chore: bump version to 0.1.24
+40f6f58 docs(roadmap): update session handoff
 d04af53 fix(arch-config): use fully-qualified policy paths in validation error messages
 5765b4e Merge pull request #118 from cognitx-leyton/archon/task-fix-issue-114
 aaea980 chore: bump version to 0.1.23
@@ -110,7 +114,13 @@ edb8cca feat(parser):   extract docstrings, params, and return types for Python
 09822fa docs(roadmap):  session handoff document for continuing work across agents
 ```
 
-Eighteen sessions' worth of work grouped by theme:
+Nineteen sessions' worth of work grouped by theme:
+
+### pyproject.toml auto-scope config — activating issue #105 fix for local dev (issue #119)
+
+- `e40fcec fix(arch-check)` — `codegraph/pyproject.toml` gains a `[tool.codegraph]` section with `packages = ["codegraph", "tests"]`. This activates the auto-scope feature shipped in `ae21e20` (issue #105): without a config entry, `codegraph arch-check` run from `codegraph/` had no scope and reported violations from all co-indexed codebases (e.g., leytongo). With this config it auto-scopes to codegraph's own packages and exits 0 (5/5 policies pass, 0 violations). Paths are relative to the `codegraph/` directory where the CLI is run (`codegraph` and `tests`, not `codegraph/codegraph` and `codegraph/tests` which are repo-root-relative). `--no-scope` still overrides and exposes all graph violations. No new tests — the auto-scope feature was already fully tested; this was a missing config entry, not a code bug.
+
+- `8df3c62 merge` + `8898ae2 chore` — PR #120 (fully-qualified paths in typed-getter validation errors, issue #117) merged to `main`; version bumped to v0.1.24.
 
 ### Fully-qualified paths in typed-getter validation errors (issue #117)
 
@@ -264,10 +274,10 @@ Beyond unit/integration tests, these were dogfooded against real systems:
 
 | Thing | Value |
 |---|---|
-| Current branch | `archon/task-fix-issue-117` |
+| Current branch | `archon/task-fix-issue-119` |
 | Base branch | `main` |
-| Unpushed commits | 1 (`d04af53` — fully-qualified paths in typed-getter validation errors, pending PR) |
-| Open PR | None. PR #118 (configurable `sample_limit`, issue #114) merged to main. |
+| Unpushed commits | 1 (`e40fcec` — pyproject.toml auto-scope config, pending PR) |
+| Open PR | None. PR #120 (fully-qualified paths in typed-getter validation errors, issue #117) merged to main. |
 | Working tree | Clean |
 | Test count | 448 passing + 1 deselected |
 | Test runtime | ~16 s |
@@ -535,6 +545,7 @@ Repo-local plans under `.claude/plans/`:
 - `document-invariant-incomplete-passed.plan.md` — shipped as `082c943`.
 - `configurable-sample-limit.plan.md` — shipped as `2103d57`.
 - `fix-typed-getter-prefix.plan.md` — shipped as `d04af53`.
+- `fix-issue-119-arch-check-scope.plan.md` — shipped as `e40fcec`.
 
 Older plans (not in repo): `sunny-giggling-moon.md` (the MCP retriever batch), `framework-detector-port.md`. These live in `~/.claude/plans/` and get overwritten on each `/plan` session unless preserved manually.
 
@@ -679,6 +690,7 @@ Grep commit bodies for rationale:
 - Why the `[settings]` validation inlines the check rather than reusing `_int()` (`_int()` hardcodes `"policies."` as the key prefix in its error message, which would produce `"policies.settings.sample_limit"` — an incorrect path; inlining gives the correct `"settings.sample_limit"` in error messages without changing the shared helper's contract) → `2103d57`
 - Why `sample_limit` rejects values < 1 (a limit of 0 would return no samples and produce vacuous PASS results — never useful and almost certainly a config mistake; the validator raises a descriptive `ValueError` rather than silently clamping, consistent with `max_imports ≥ 1`) → `2103d57`
 - Why `_bool`/`_int`/`_str` helpers now take `section_path` instead of `section` and format errors as `f"{section_path}.{key}"` (callers are the only ones with full context on where the value lives in the TOML tree; the helper had no basis for assuming `"policies."` as a universal prefix — `sample_limit` lives under `"settings"`, not `"policies"`) → `d04af53`
+- Why `pyproject.toml` packages use `["codegraph", "tests"]` not `["codegraph/codegraph", "codegraph/tests"]` (`load_config` discovers `pyproject.toml` from the `codegraph/` directory where `arch-check` is run; `codegraph index .` from that directory stores file paths relative to `.`, so graph paths are `codegraph/cli.py` not `codegraph/codegraph/cli.py`; the longer paths are only correct when indexing from the repo root — which CI does via `-p codegraph/codegraph`) → `e40fcec`
 - Why `assert not (incomplete and new_violation_count == 0)` is sound (when `incomplete=True`, at least `violation_count - len(sample)` violations were never fetched; even if all sampled rows were suppressed, the unseen rows remain — so `violation_count > 0` is guaranteed and `passed` can never be True; the assert documents and enforces this invariant to catch future regressions) → `082c943`
 - Why `--no-scope` is needed when auto-scope is active (the graph may deliberately co-index multiple projects for cross-project arch-check; `--no-scope` restores the pre-#105 full-graph behaviour without requiring the user to delete their config) → `ae21e20`
 - Why `--scope` takes precedence over auto-scope (explicit always beats implicit; a CI job that passes `--scope` should not be silently overridden by whatever config the target repo happens to have) → `ae21e20`
