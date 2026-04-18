@@ -453,6 +453,134 @@ def _print_load_stats_dict(stats: dict[str, Any]) -> None:
     console.print(t)
 
 
+# ── stats helpers ───────────────────────────────────────────────────
+
+_STAT_NODE_LABELS = (
+    "files", "classes", "functions", "methods", "interfaces",
+    "endpoints", "hooks", "decorators",
+)
+
+
+def _query_graph_stats(driver, scope: list[str] | None) -> dict[str, Any]:
+    """Query Neo4j for node and edge counts, optionally filtered by scope prefixes.
+
+    File nodes use ``.path`` while other nodes use ``.file``, so queries
+    use ``coalesce(n.file, n.path)`` to handle both uniformly.
+    """
+    with driver.session() as s:
+        if scope:
+            node_cypher = (
+                "MATCH (n) "
+                "WITH n, coalesce(n.file, n.path) AS loc "
+                "WHERE loc IS NOT NULL "
+                "AND any(s IN $scopes WHERE loc STARTS WITH s) "
+                "RETURN labels(n)[0] AS label, count(*) AS count"
+            )
+            edge_cypher = (
+                "MATCH (a)-[r]->(b) "
+                "WITH a, r, b, "
+                "coalesce(a.file, a.path) AS aloc, "
+                "coalesce(b.file, b.path) AS bloc "
+                "WHERE (aloc IS NOT NULL AND any(s IN $scopes WHERE aloc STARTS WITH s)) "
+                "OR (bloc IS NOT NULL AND any(s IN $scopes WHERE bloc STARTS WITH s)) "
+                "RETURN type(r) AS rel, count(*) AS count"
+            )
+            params = {"scopes": scope}
+        else:
+            node_cypher = (
+                "MATCH (n) "
+                "WHERE n.file IS NOT NULL OR n.path IS NOT NULL "
+                "RETURN labels(n)[0] AS label, count(*) AS count"
+            )
+            edge_cypher = (
+                "MATCH ()-[r]->() "
+                "RETURN type(r) AS rel, count(*) AS count"
+            )
+            params = {}
+
+        node_rows = list(s.run(node_cypher, **params))
+        edge_rows = list(s.run(edge_cypher, **params))
+
+    label_counts: dict[str, int] = {}
+    for row in node_rows:
+        label_counts[row["label"]] = int(row["count"])
+
+    _LABEL_MAP = {
+        "files": "File", "classes": "Class", "functions": "Function",
+        "methods": "Method", "interfaces": "Interface", "endpoints": "Endpoint",
+        "hooks": "Hook", "decorators": "Decorator",
+    }
+    out: dict[str, Any] = {}
+    for k in _STAT_NODE_LABELS:
+        out[k] = label_counts.get(_LABEL_MAP[k], 0)
+
+    edges: dict[str, int] = {}
+    for row in edge_rows:
+        edges[row["rel"]] = int(row["count"])
+    out["edges"] = edges
+
+    return out
+
+
+def _format_stat_line(stats: dict[str, Any]) -> str:
+    """Build a human-readable stat summary from a stats dict.
+
+    Produces output like ``"~21 files, 56 classes, 134 module functions, ~178 methods"``.
+    Zero-count entries are omitted. Files and methods get a ``~`` prefix (convention).
+    """
+    parts: list[str] = []
+    spec: list[tuple[str, str, bool]] = [
+        ("files", "files", True),
+        ("classes", "classes", False),
+        ("functions", "module functions", False),
+        ("methods", "methods", True),
+        ("interfaces", "interfaces", False),
+        ("endpoints", "endpoints", False),
+        ("hooks", "hooks", False),
+        ("decorators", "decorators", False),
+    ]
+    for key, label, approx in spec:
+        val = stats.get(key, 0)
+        if val:
+            prefix = "~" if approx else ""
+            parts.append(f"{prefix}{val} {label}")
+    return ", ".join(parts) if parts else "(empty graph)"
+
+
+_STAT_PLACEHOLDER_RE = re.compile(
+    r"(<!-- codegraph:stats-begin -->\n).*?(\n<!-- codegraph:stats-end -->)",
+    re.DOTALL,
+)
+
+
+def _update_stat_placeholders(
+    files: list[Path], stat_line: str, *, quiet: bool = False,
+) -> int:
+    """Replace content between stat placeholder delimiters in *files*.
+
+    Returns the number of files that were actually modified.
+    """
+    updated = 0
+    for path in files:
+        if not path.exists():
+            if not quiet:
+                console.print(f"  [yellow]skip[/] {path} (not found)")
+            continue
+        content = path.read_text(encoding="utf-8")
+        new_content = _STAT_PLACEHOLDER_RE.sub(
+            lambda m: f"{m.group(1)}{stat_line}{m.group(2)}", content,
+        )
+        if new_content == content:
+            if not quiet:
+                console.print(f"  [dim]skip[/] {path} (no change)")
+            continue
+        path.write_text(new_content, encoding="utf-8")
+        updated += 1
+        if not quiet:
+            console.print(f"  [green]updated[/] {path}")
+    return updated
+
+
 _ROUTE_RE = re.compile(
     r"<\s*Route\b[^>]*\bpath\s*=\s*[\"']([^\"']+)[\"'][^>]*\belement\s*=\s*\{\s*<\s*([A-Z]\w*)",
     re.MULTILINE,
@@ -687,6 +815,92 @@ def wipe(
         print(json.dumps({"ok": True, "action": "wipe", "uri": uri}, indent=2))
     else:
         console.print("[green]✓[/] wiped")
+
+
+# ── stats ───────────────────────────────────────────────────────────
+
+@app.command()
+def stats(
+    uri: str = DEFAULT_URI,
+    user: str = DEFAULT_USER,
+    password: str = DEFAULT_PASS,
+    as_json: bool = typer.Option(False, "--json", help="Emit stats as JSON on stdout."),
+    scope: Optional[list[str]] = typer.Option(
+        None, "--scope", "-s",
+        help="Restrict counts to nodes whose file path starts with this "
+             "prefix. Repeatable.",
+    ),
+    no_scope: bool = typer.Option(
+        False, "--no-scope",
+        help="Disable auto-scope even when packages are configured. "
+             "Counts the entire graph.",
+    ),
+    update: bool = typer.Option(
+        False, "--update",
+        help="Update stat placeholders in markdown files in-place.",
+    ),
+    files: Optional[list[Path]] = typer.Option(
+        None, "--file", "-f",
+        help="Markdown file to update (repeatable). Defaults to "
+             "CLAUDE.md + .claude/commands/graph.md.",
+    ),
+    repo: Path = typer.Option(
+        Path("."), "--repo",
+        help="Repo root for locating config and markdown files.",
+        exists=True, file_okay=False,
+    ),
+) -> None:
+    """Query the live graph for node/edge counts.
+
+    Optionally patch markdown files that contain
+    ``<!-- codegraph:stats-begin -->`` / ``<!-- codegraph:stats-end -->``
+    placeholder delimiters with fresh numbers (``--update``).
+    """
+    # Auto-scope from config when no explicit flag given.
+    effective_scope = scope
+    if scope is None and not no_scope:
+        cfg = load_config(repo.resolve())
+        if cfg.packages:
+            effective_scope = list(cfg.packages)
+            if not as_json:
+                console.print(
+                    f"[dim]auto-scope from {cfg.source}:[/] "
+                    + ", ".join(effective_scope)
+                )
+
+    driver = GraphDatabase.driver(uri, auth=(user, password))
+    try:
+        result = _query_graph_stats(driver, effective_scope)
+    finally:
+        driver.close()
+
+    output: dict[str, Any] = {"ok": True, "stats": result}
+
+    if update:
+        stat_line = _format_stat_line(result)
+        repo_root = repo.resolve()
+        if files:
+            targets = list(files)
+        else:
+            targets = [
+                repo_root / "CLAUDE.md",
+                repo_root / ".claude" / "commands" / "graph.md",
+            ]
+        n = _update_stat_placeholders(targets, stat_line, quiet=as_json)
+        output["files_updated"] = n
+        if not as_json:
+            console.print(f"[bold green]✓[/] updated {n} file(s)")
+
+    if as_json:
+        print(json.dumps(output, indent=2))
+    else:
+        t = Table(title="Graph stats", show_header=True, header_style="bold magenta")
+        t.add_column("entity"); t.add_column("count", justify="right")
+        for k in _STAT_NODE_LABELS:
+            t.add_row(k, str(result.get(k, 0)))
+        for k, v in sorted(result.get("edges", {}).items()):
+            t.add_row(f"edge:{k}", str(v))
+        console.print(t)
 
 
 # ── error emission helper ────────────────────────────────────────────

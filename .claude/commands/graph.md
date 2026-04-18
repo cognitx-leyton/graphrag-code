@@ -17,8 +17,10 @@ Assumes:
 
 ## Canonical query patterns for this repo
 
-The graph is currently indexed for `codegraph/codegraph/` (the Python package) — ~20 files, 56 classes, 134 module functions, ~180 methods, decorators via `:Decorator` nodes, imports via `IMPORTS` / `IMPORTS_SYMBOL` / `IMPORTS_EXTERNAL` edges.
-<!-- Stats updated 2026-04-18. Refresh after major releases. -->
+<!-- codegraph:stats-begin -->
+~20 files, 56 classes, 134 module functions, ~180 methods
+<!-- codegraph:stats-end -->
+The graph is currently indexed for `codegraph/codegraph/` (the Python package), with decorators via `:Decorator` nodes, imports via `IMPORTS` / `IMPORTS_SYMBOL` / `IMPORTS_EXTERNAL` edges. Run `codegraph stats --update` to refresh the numbers above.
 
 ### Blast radius — who depends on a file?
 

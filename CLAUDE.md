@@ -58,8 +58,10 @@ Policy reference + false-positive guidance: `codegraph/docs/arch-policies.md`.
 
 ### What's indexed (and what isn't)
 
-The slash commands point at `codegraph/codegraph/` (the Python package) and `codegraph/tests/` (its test suite). The package is ~20 files, 56 classes, 134 module functions, ~180 methods; tests add another ~17 files that pair back via `TESTS` edges where they share a directory with their production peer. **Not indexed**: the root-level `dependency_slicer.py`, `.venv`, the repo root's config files.
-<!-- Stats updated 2026-04-18. Refresh: codegraph query "MATCH (n) WHERE n.file STARTS WITH 'codegraph/' RETURN labels(n)[0], count(*)" -->
+<!-- codegraph:stats-begin -->
+~20 files, 56 classes, 134 module functions, ~180 methods
+<!-- codegraph:stats-end -->
+The slash commands point at `codegraph/codegraph/` (the Python package) and `codegraph/tests/` (its test suite). Tests add another ~17 files that pair back via `TESTS` edges where they share a directory with their production peer. **Not indexed**: the root-level `dependency_slicer.py`, `.venv`, the repo root's config files. Run `codegraph stats --update` to refresh these numbers.
 
 If you want a query against other paths, re-run `codegraph/.venv/bin/codegraph index . -p <path>` with the package scope you want.
 
