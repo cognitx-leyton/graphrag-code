@@ -61,6 +61,39 @@ log = logging.getLogger(__name__)
 
 BATCH = 1000
 
+# Prefixes that encode a file path as ``<prefix>:<path>#<rest>``.
+_FILE_BEARING_PREFIXES = ("file:", "class:", "func:", "method:", "endpoint:", "gqlop:", "atom:")
+
+
+def _file_from_id(node_id: str) -> str | None:
+    """Extract the file path embedded in a node ID, or ``None``.
+
+    IDs follow ``<prefix>:<path>#<name>`` (class, func, method, …) or
+    ``<prefix>:<path>`` (file). Singletons like ``hook:``, ``external:``,
+    ``dec:`` don't encode a file path — return ``None`` for those.
+
+    Special cases:
+    - ``method:class:<path>#<cls>#<method>`` — nested ``class:`` prefix.
+    - ``endpoint:<method>:<path>@<file>#<handler>`` — file is after ``@``.
+    - ``gqlop:<type>:<name>@<file>#<handler>`` — file is after ``@``.
+    """
+    for pfx in _FILE_BEARING_PREFIXES:
+        if node_id.startswith(pfx):
+            rest = node_id[len(pfx):]
+            # ``method:class:<path>#<cls>#<method>``
+            if rest.startswith("class:"):
+                rest = rest[len("class:"):]
+                return rest.split("#", 1)[0]
+            # ``endpoint:`` and ``gqlop:`` embed the file after ``@``
+            if pfx in ("endpoint:", "gqlop:"):
+                at_idx = rest.find("@")
+                if at_idx >= 0:
+                    after_at = rest[at_idx + 1:]
+                    return after_at.split("#", 1)[0]
+                return None
+            return rest.split("#", 1)[0]
+    return None
+
 
 _CONSTRAINTS = [
     "CREATE CONSTRAINT file_path IF NOT EXISTS FOR (n:File) REQUIRE n.path IS UNIQUE",
@@ -128,7 +161,85 @@ class Neo4jLoader:
         with self.driver.session(database=self.database) as s:
             s.run("MATCH (n) DETACH DELETE n")
 
-    def load(self, index: Index, edges: list[Edge], ownership: dict | None = None) -> LoadStats:
+    def delete_file_subgraph(self, paths: list[str]) -> int:
+        """Delete :File nodes for *paths* and all their children (Class, Method, Function, etc.).
+
+        Used by incremental re-indexing (``--since``) to clean up stale data
+        before re-loading touched files. Returns the number of paths processed.
+        """
+        if not paths:
+            return 0
+        rows = [dict(path=p) for p in paths]
+        with self.driver.session(database=self.database) as s:
+            # 1. Methods (children of classes in these files)
+            _run(s, """
+                UNWIND $rows AS r
+                MATCH (f:File {path: r.path})-[:DEFINES_CLASS]->(c:Class)-[:HAS_METHOD]->(m:Method)
+                DETACH DELETE m
+            """, rows)
+            # 2. Endpoints (children of classes)
+            _run(s, """
+                UNWIND $rows AS r
+                MATCH (f:File {path: r.path})-[:DEFINES_CLASS]->(c:Class)-[:EXPOSES]->(e:Endpoint)
+                DETACH DELETE e
+            """, rows)
+            # 3. GraphQL operations (children of classes)
+            _run(s, """
+                UNWIND $rows AS r
+                MATCH (f:File {path: r.path})-[:DEFINES_CLASS]->(c:Class)-[:RESOLVES]->(o:GraphQLOperation)
+                DETACH DELETE o
+            """, rows)
+            # 4. Columns (children of entity classes)
+            _run(s, """
+                UNWIND $rows AS r
+                MATCH (f:File {path: r.path})-[:DEFINES_CLASS]->(c:Class)-[:HAS_COLUMN]->(col:Column)
+                DETACH DELETE col
+            """, rows)
+            # 5. Classes themselves
+            _run(s, """
+                UNWIND $rows AS r
+                MATCH (f:File {path: r.path})-[:DEFINES_CLASS]->(c:Class)
+                DETACH DELETE c
+            """, rows)
+            # 6. Functions
+            _run(s, """
+                UNWIND $rows AS r
+                MATCH (f:File {path: r.path})-[:DEFINES_FUNC]->(fn:Function)
+                DETACH DELETE fn
+            """, rows)
+            # 7. Interfaces
+            _run(s, """
+                UNWIND $rows AS r
+                MATCH (f:File {path: r.path})-[:DEFINES_IFACE]->(i:Interface)
+                DETACH DELETE i
+            """, rows)
+            # 8. Atoms
+            _run(s, """
+                UNWIND $rows AS r
+                MATCH (f:File {path: r.path})-[:DEFINES_ATOM]->(a:Atom)
+                DETACH DELETE a
+            """, rows)
+            # 9. Remaining edges from/to each file
+            _run(s, """
+                UNWIND $rows AS r
+                MATCH (f:File {path: r.path})-[rel]-()
+                DELETE rel
+            """, rows)
+            # 10. The file nodes themselves
+            _run(s, """
+                UNWIND $rows AS r
+                MATCH (f:File {path: r.path})
+                DELETE f
+            """, rows)
+        return len(paths)
+
+    def load(
+        self,
+        index: Index,
+        edges: list[Edge],
+        ownership: dict | None = None,
+        touched_files: set[str] | None = None,
+    ) -> LoadStats:
         stats = LoadStats()
         files = [r.file for r in index.files_by_path.values()]
         classes = [c for r in index.files_by_path.values() for c in r.classes]
@@ -139,6 +250,18 @@ class Neo4jLoader:
         columns = [c for r in index.files_by_path.values() for c in r.columns]
         gql_ops = [o for r in index.files_by_path.values() for o in r.gql_operations]
         atoms = [a for r in index.files_by_path.values() for a in r.atoms]
+
+        # Incremental mode: restrict nodes to touched files only.
+        if touched_files is not None:
+            files = [f for f in files if f.path in touched_files]
+            classes = [c for c in classes if c.file in touched_files]
+            funcs = [f for f in funcs if f.file in touched_files]
+            methods = [m for m in methods if m.file in touched_files]
+            ifaces = [i for i in ifaces if i.file in touched_files]
+            endpoints = [e for e in endpoints if e.file in touched_files]
+            columns = [c for c in columns if c.entity_id.split("#")[0].split(":", 1)[1] in touched_files]
+            gql_ops = [o for o in gql_ops if o.file in touched_files]
+            atoms = [a for a in atoms if a.file in touched_files]
 
         # Collect atomic sets
         externals: set[str] = set()
@@ -366,6 +489,12 @@ class Neo4jLoader:
                  [dict(name=e) for e in events])
 
             # ── Edges ─────────────────────────────────────────────
+            if touched_files is not None:
+                edges = [
+                    e for e in edges
+                    if _file_from_id(e.src_id) in touched_files
+                    or _file_from_id(e.dst_id) in touched_files
+                ]
             _write_edges(s, edges, stats)
 
             # ── Atom reads/writes, env reads, events (per-file) ──
