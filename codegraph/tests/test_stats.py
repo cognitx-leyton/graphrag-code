@@ -327,3 +327,41 @@ def test_stats_update_flag(tmp_path: Path, monkeypatch):
     content = md.read_text()
     assert "~21 files" in content
     assert "old stats" not in content
+
+
+def test_stats_auto_scope(monkeypatch):
+    """When neither --scope nor --no-scope is given, stats reads packages from config."""
+    from typer.testing import CliRunner
+
+    import codegraph.cli
+    from codegraph.cli import app
+    from codegraph.config import CodegraphConfig
+    from neo4j import GraphDatabase
+
+    packages = ["codegraph", "tests"]
+
+    driver = _constant_driver({
+        "labels(n)": _SAMPLE_NODES,
+        "type(r)": _SAMPLE_EDGES,
+    })
+
+    monkeypatch.setattr(GraphDatabase, "driver", lambda *a, **kw: driver)
+    monkeypatch.setattr(
+        codegraph.cli, "load_config",
+        lambda _path: CodegraphConfig(packages=packages, source="codegraph.toml"),
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["stats", "--json"])
+    assert result.exit_code == 0, result.output
+
+    data = json.loads(result.output)
+    assert data["ok"] is True
+    assert data["stats"]["files"] == 21
+
+    # Verify auto-scope was forwarded to the Neo4j queries
+    session = driver._session
+    assert len(session.calls) == 2
+    node_cypher, node_params = session.calls[0]
+    assert node_params["scopes"] == packages
+    assert "STARTS WITH" in node_cypher
