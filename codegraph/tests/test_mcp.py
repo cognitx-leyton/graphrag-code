@@ -746,3 +746,277 @@ def test_register_query_prompts_skips_missing_file(monkeypatch, tmp_path):
     fresh = _FastMCP("test")
     mcp_mod._register_query_prompts(fresh)
     assert len(fresh._prompt_manager._prompts) == 0
+
+
+# ── write session contract ─────────────────────────────────────────
+
+
+def test_write_session_uses_write_access(monkeypatch):
+    """Sanity check: `_write_session` asks the driver for a WRITE_ACCESS session."""
+    captured: dict = {}
+
+    class _Spy:
+        def session(self, **kw):
+            captured.update(kw)
+            return _FakeSession([])
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(mcp_mod, "_driver", _Spy())
+    with mcp_mod._write_session():
+        pass
+    from neo4j import WRITE_ACCESS
+    assert captured.get("default_access_mode") == WRITE_ACCESS
+
+
+# ── --allow-write gate ─────────────────────────────────────────────
+
+
+def test_write_tools_blocked_without_allow_write(monkeypatch):
+    """Both write tools return an error when _allow_write is False."""
+    monkeypatch.setattr(mcp_mod, "_allow_write", False)
+    _patch(monkeypatch, [[]])
+
+    wipe_result = mcp_mod.wipe_graph(confirm=True)
+    assert "error" in wipe_result
+    assert "allow-write" in wipe_result["error"]
+
+    reindex_result = mcp_mod.reindex_file("foo.py")
+    assert "error" in reindex_result
+    assert "allow-write" in reindex_result["error"]
+
+
+def test_main_parses_allow_write(monkeypatch):
+    """main() sets _allow_write to True when --allow-write is passed."""
+    import sys
+    monkeypatch.setattr(sys, "argv", ["codegraph-mcp", "--allow-write"])
+    monkeypatch.setattr(mcp_mod.mcp, "run", lambda **kw: None)
+    monkeypatch.setattr(mcp_mod, "_driver", None)
+    mcp_mod.main()
+    assert mcp_mod._allow_write is True
+    # Reset
+    monkeypatch.setattr(mcp_mod, "_allow_write", False)
+
+
+def test_main_default_no_allow_write(monkeypatch):
+    """main() leaves _allow_write as False by default."""
+    import sys
+    monkeypatch.setattr(sys, "argv", ["codegraph-mcp"])
+    monkeypatch.setattr(mcp_mod.mcp, "run", lambda **kw: None)
+    monkeypatch.setattr(mcp_mod, "_driver", None)
+    mcp_mod.main()
+    assert mcp_mod._allow_write is False
+
+
+# ── wipe_graph ─────────────────────────────────────────────────────
+
+
+def test_wipe_graph_requires_confirm(monkeypatch):
+    monkeypatch.setattr(mcp_mod, "_allow_write", True)
+    _patch(monkeypatch, [[]])
+    out = mcp_mod.wipe_graph()
+    assert out == {"error": "Pass confirm=True to wipe the entire graph"}
+
+
+def test_wipe_graph_blocked_without_allow_write(monkeypatch):
+    monkeypatch.setattr(mcp_mod, "_allow_write", False)
+    _patch(monkeypatch, [[]])
+    out = mcp_mod.wipe_graph(confirm=True)
+    assert "error" in out
+    assert "allow-write" in out["error"]
+
+
+def test_wipe_graph_happy_path(monkeypatch):
+    monkeypatch.setattr(mcp_mod, "_allow_write", True)
+    driver = _patch(monkeypatch, [[]])
+    out = mcp_mod.wipe_graph(confirm=True)
+    assert out == {"ok": True, "action": "wipe"}
+    cypher, _ = driver.session_obj.calls[0]
+    assert "DETACH DELETE" in cypher
+
+
+def test_wipe_graph_surfaces_service_unavailable(monkeypatch):
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        monkeypatch.setattr(mcp_mod, "_allow_write", True)
+        _patch(monkeypatch, ServiceUnavailable("down"))
+        out = mcp_mod.wipe_graph(confirm=True)
+    assert "error" in out
+    assert "Neo4j is unreachable" in out["error"]
+
+
+def test_wipe_graph_surfaces_client_error(monkeypatch):
+    monkeypatch.setattr(mcp_mod, "_allow_write", True)
+    _patch(monkeypatch, ClientError("forbidden"))
+    out = mcp_mod.wipe_graph(confirm=True)
+    assert "error" in out
+    assert "Neo4j rejected query" in out["error"]
+
+
+# ── reindex_file ───────────────────────────────────────────────────
+
+
+def test_reindex_file_rejects_bad_extension(monkeypatch):
+    monkeypatch.setattr(mcp_mod, "_allow_write", True)
+    out = mcp_mod.reindex_file("foo.go")
+    assert out == {"error": "path must end in .py, .ts, or .tsx"}
+
+
+def test_reindex_file_blocked_without_allow_write(monkeypatch):
+    monkeypatch.setattr(mcp_mod, "_allow_write", False)
+    out = mcp_mod.reindex_file("foo.py")
+    assert "error" in out
+    assert "allow-write" in out["error"]
+
+
+def test_reindex_file_errors_when_no_package(monkeypatch):
+    """When no package param and file not in graph, return clear error."""
+    monkeypatch.setattr(mcp_mod, "_allow_write", True)
+    _patch(monkeypatch, [[]])  # Empty result for package lookup
+    out = mcp_mod.reindex_file("unknown.py")
+    assert "error" in out
+    assert "not found in graph" in out["error"]
+
+
+def test_reindex_file_propagates_neo4j_error_on_package_lookup(monkeypatch):
+    """Neo4j errors during package lookup should surface, not mask as 'not found'."""
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        monkeypatch.setattr(mcp_mod, "_allow_write", True)
+        _patch(monkeypatch, ServiceUnavailable("down"))
+        out = mcp_mod.reindex_file("some_file.py")
+    assert "error" in out
+    assert "Neo4j is unreachable" in out["error"]
+
+
+def test_reindex_file_looks_up_package_from_graph(monkeypatch, tmp_path):
+    """When no package param, the tool queries the graph for f.package."""
+    monkeypatch.setattr(mcp_mod, "_allow_write", True)
+
+    # Create a real .py file so the disk check passes
+    py_file = tmp_path / "src" / "app.py"
+    py_file.parent.mkdir(parents=True)
+    py_file.write_text("x = 1\n")
+
+    # First call returns the package from graph; subsequent calls are writes
+    driver = _patch(monkeypatch, [[{"pkg": "mypackage"}]])
+
+    # Mock the parser so we don't need tree-sitter
+    from codegraph.py_parser import PyParser
+    from codegraph.schema import FileNode, ParseResult
+    fake_result = ParseResult(
+        file=FileNode(path=str(py_file), package="mypackage", language="py", loc=1),
+    )
+
+    monkeypatch.setattr(PyParser, "parse_file", lambda *a, **kw: fake_result)
+
+    out = mcp_mod.reindex_file(str(py_file), package=None)
+    # The first query should be the package lookup
+    first_cypher, first_params = driver.session_obj.calls[0]
+    assert "f.package AS pkg" in first_cypher
+    assert first_params["path"] == str(py_file)
+
+
+def test_reindex_file_happy_path(monkeypatch, tmp_path):
+    """Happy path: parses file, deletes old subgraph, loads new nodes."""
+    monkeypatch.setattr(mcp_mod, "_allow_write", True)
+
+    # Create a real .py file
+    py_file = tmp_path / "mod.py"
+    py_file.write_text("class Foo:\n    pass\n")
+
+    driver = _patch(monkeypatch, [[]])
+
+    # Mock the parser
+    from codegraph.py_parser import PyParser
+    from codegraph.schema import ClassNode, FileNode, FunctionNode, ParseResult
+    fake_result = ParseResult(
+        file=FileNode(path=str(py_file), package="pkg", language="py", loc=2),
+        classes=[ClassNode(name="Foo", file=str(py_file))],
+        functions=[FunctionNode(name="bar", file=str(py_file))],
+    )
+
+    monkeypatch.setattr(PyParser, "parse_file", lambda *a, **kw: fake_result)
+
+    out = mcp_mod.reindex_file(str(py_file), package="pkg")
+    assert out["ok"] is True
+    assert out["file"] == str(py_file)
+    assert out["nodes"] == 3  # 1 File + 1 Class + 1 Function
+    assert out["edges"] == 0
+
+
+def test_reindex_file_file_not_on_disk(monkeypatch):
+    """Error when the file doesn't exist on disk."""
+    monkeypatch.setattr(mcp_mod, "_allow_write", True)
+    out = mcp_mod.reindex_file("/nonexistent/path/foo.py", package="pkg")
+    assert "error" in out
+    assert "not found on disk" in out["error"]
+
+
+def test_reindex_file_surfaces_client_error(monkeypatch, tmp_path):
+    """Neo4j ClientError during write is surfaced."""
+    monkeypatch.setattr(mcp_mod, "_allow_write", True)
+
+    py_file = tmp_path / "mod.py"
+    py_file.write_text("x = 1\n")
+
+    _patch(monkeypatch, ClientError("write rejected"))
+
+    from codegraph.py_parser import PyParser
+    from codegraph.schema import FileNode, ParseResult
+    fake_result = ParseResult(
+        file=FileNode(path=str(py_file), package="pkg", language="py", loc=1),
+    )
+
+    monkeypatch.setattr(PyParser, "parse_file", lambda *a, **kw: fake_result)
+
+    out = mcp_mod.reindex_file(str(py_file), package="pkg")
+    assert "error" in out
+    assert "Neo4j rejected query" in out["error"]
+
+
+def test_reindex_file_loads_decorated_by_edges(monkeypatch, tmp_path):
+    """DECORATED_BY edges match Decorator by name, not by id."""
+    monkeypatch.setattr(mcp_mod, "_allow_write", True)
+
+    py_file = tmp_path / "mod.py"
+    py_file.write_text("@mcp.tool()\ndef helper():\n    pass\n")
+
+    driver = _patch(monkeypatch, [[]])
+
+    from codegraph.py_parser import PyParser
+    from codegraph.schema import (
+        DECORATED_BY, Edge, FileNode, FunctionNode, ParseResult,
+    )
+    fake_result = ParseResult(
+        file=FileNode(path=str(py_file), package="pkg", language="py", loc=3),
+        functions=[FunctionNode(name="helper", file=str(py_file))],
+        edges=[
+            Edge(kind=DECORATED_BY, src_id="func:mod.py#helper", dst_id="dec:mcp.tool()"),
+        ],
+    )
+
+    monkeypatch.setattr(PyParser, "parse_file", lambda *a, **kw: fake_result)
+
+    out = mcp_mod.reindex_file(str(py_file), package="pkg")
+    assert out["ok"] is True
+    assert out["edges"] == 1
+
+    # Verify the Decorator MERGE uses {name: ...}, not {id: ...}
+    decorator_merges = [
+        cypher for cypher, _ in driver.session_obj.calls
+        if "Decorator" in cypher and "MERGE" in cypher
+    ]
+    assert len(decorator_merges) >= 1
+    # Should match by name, not id
+    assert any("{name:" in c or "name: " in c for c in decorator_merges)
+
+    # Verify the edge MERGE matches Function by label
+    edge_merges = [
+        cypher for cypher, _ in driver.session_obj.calls
+        if "DECORATED_BY" in cypher and "Function" in cypher
+    ]
+    assert len(edge_merges) == 1

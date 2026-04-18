@@ -15,6 +15,7 @@ Then add to ``~/.claude.json``::
       "mcpServers": {
         "codegraph": {
           "command": "codegraph-mcp",
+          "args": ["--allow-write"],
           "type": "stdio",
           "env": {
             "CODEGRAPH_NEO4J_URI":  "bolt://localhost:7688",
@@ -25,20 +26,22 @@ Then add to ``~/.claude.json``::
       }
     }
 
-All tools are read-only: every session is opened with
-``default_access_mode=neo4j.READ_ACCESS`` so an LLM-generated ``DROP`` or
-``DELETE`` query will surface as a Neo4j ``ClientError`` rather than mutating
-the graph.
+Read-only tools use ``neo4j.READ_ACCESS`` sessions so an LLM-generated
+``DROP`` or ``DELETE`` query surfaces as a ``ClientError`` rather than
+mutating the graph. Two write tools (``reindex_file``, ``wipe_graph``) are
+available when ``--allow-write`` is passed on the CLI; without the flag they
+return a descriptive error.
 """
 from __future__ import annotations
 
+import argparse
 import os
 import re
 from pathlib import Path
 from typing import Any, NamedTuple, Optional
 
 from mcp.server.fastmcp import FastMCP
-from neo4j import READ_ACCESS, Driver, GraphDatabase
+from neo4j import READ_ACCESS, WRITE_ACCESS, Driver, GraphDatabase
 from neo4j.exceptions import ClientError, CypherSyntaxError, ServiceUnavailable
 
 from .utils.neo4j_json import clean_row
@@ -136,6 +139,10 @@ _URI = os.environ.get("CODEGRAPH_NEO4J_URI", "bolt://localhost:7688")
 _USER = os.environ.get("CODEGRAPH_NEO4J_USER", "neo4j")
 _PASS = os.environ.get("CODEGRAPH_NEO4J_PASS", "codegraph123")
 
+_allow_write: bool = False
+"""Set to ``True`` by ``main()`` when ``--allow-write`` is passed on the CLI.
+Write tools check this flag and return an error when it is ``False``."""
+
 
 # ── Driver lifecycle ────────────────────────────────────────────────
 
@@ -158,6 +165,11 @@ def _get_driver() -> "Driver":
 def _read_session():
     """Open a read-only session via the module-scoped driver."""
     return _get_driver().session(default_access_mode=READ_ACCESS)
+
+
+def _write_session():
+    """Open a write-enabled session via the module-scoped driver."""
+    return _get_driver().session(default_access_mode=WRITE_ACCESS)
 
 
 def _err_msg(e: BaseException) -> str:
@@ -591,10 +603,384 @@ def describe_function(name: str, file: Optional[str] = None) -> list[dict]:
     return _run_read(cypher, name=name, file=file)
 
 
+# ── Write tools (gated by --allow-write) ──────────────────────────
+
+
+_WRITE_GATE_MSG = "Write tools require --allow-write flag on codegraph-mcp"
+
+
+@mcp.tool()
+def wipe_graph(confirm: bool = False) -> dict:
+    """Wipe all nodes and relationships from the Neo4j graph.
+
+    This is a DESTRUCTIVE operation. The server must be started with
+    ``--allow-write`` and the caller must pass ``confirm=True``.
+
+    Args:
+        confirm: Must be ``True`` to proceed. Safety guard against
+            accidental invocation.
+    """
+    if not _allow_write:
+        return {"error": _WRITE_GATE_MSG}
+    if not confirm:
+        return {"error": "Pass confirm=True to wipe the entire graph"}
+    try:
+        with _write_session() as s:
+            s.run("MATCH (n) DETACH DELETE n")
+    except ClientError as e:
+        return {"error": f"Neo4j rejected query: {_err_msg(e)}"}
+    except ServiceUnavailable as e:
+        return {"error": f"Neo4j is unreachable: {e}"}
+    return {"ok": True, "action": "wipe"}
+
+
+@mcp.tool()
+def reindex_file(path: str, package: Optional[str] = None) -> dict:
+    """Re-index a single file: delete its old subgraph, parse it, and reload.
+
+    Refreshes the file's nodes (classes, functions, methods, etc.) and
+    intra-file edges. Cross-file edges (IMPORTS, CALLS across files) are
+    NOT refreshed — run a full ``codegraph index`` for that.
+
+    The server must be started with ``--allow-write``.
+
+    Args:
+        path: Repo-relative file path (e.g. ``"codegraph/codegraph/mcp.py"``).
+            Must end in ``.py``, ``.ts``, or ``.tsx``.
+        package: Package name to associate the file with. If omitted, looked
+            up from the existing ``:File`` node in the graph.
+    """
+    if not _allow_write:
+        return {"error": _WRITE_GATE_MSG}
+
+    # ── Validate extension ──────────────────────────────────────
+    allowed_exts = (".py", ".ts", ".tsx")
+    if not any(path.endswith(ext) for ext in allowed_exts):
+        return {"error": "path must end in .py, .ts, or .tsx"}
+
+    # ── Resolve package from graph if not provided ──────────────
+    if package is None:
+        rows = _run_read(
+            "MATCH (f:File {path: $path}) RETURN f.package AS pkg",
+            path=path,
+        )
+        if rows and "error" in rows[0]:
+            return rows[0]
+        if rows and "pkg" in rows[0] and rows[0]["pkg"]:
+            package = rows[0]["pkg"]
+        else:
+            return {
+                "error": f"File {path} not found in graph and no package specified"
+            }
+
+    # ── Locate file on disk ─────────────────────────────────────
+    abs_path = Path(path)
+    if not abs_path.is_absolute():
+        abs_path = Path.cwd() / path
+    if not abs_path.is_file():
+        return {"error": f"File not found on disk: {abs_path}"}
+
+    # ── Detect test file ────────────────────────────────────────
+    from .schema import PY_TEST_PREFIX, PY_TEST_SUFFIX_TRAILING, TS_TEST_SUFFIXES
+
+    name_lower = abs_path.name.lower()
+    if path.endswith(".py"):
+        is_test = (
+            name_lower.startswith(PY_TEST_PREFIX)
+            or name_lower.endswith(PY_TEST_SUFFIX_TRAILING)
+        )
+    else:
+        is_test = any(name_lower.endswith(suf) for suf in TS_TEST_SUFFIXES)
+
+    # ── Parse ───────────────────────────────────────────────────
+    try:
+        if path.endswith(".py"):
+            from .py_parser import PyParser
+
+            result = PyParser().parse_file(abs_path, path, package, is_test=is_test)
+        else:
+            from .parser import TsParser
+
+            result = TsParser().parse_file(abs_path, path, package, is_test=is_test)
+    except Exception as e:
+        return {"error": f"Parse failed: {e}"}
+
+    if result is None:
+        return {"error": f"Parser returned no result for {path}"}
+
+    # ── Delete old subgraph ─────────────────────────────────────
+    _DELETE_CASCADE = [
+        # 1. Methods
+        "MATCH (f:File {path: $path})-[:DEFINES_CLASS]->(c:Class)"
+        "-[:HAS_METHOD]->(m:Method) DETACH DELETE m",
+        # 2. Endpoints
+        "MATCH (f:File {path: $path})-[:DEFINES_CLASS]->(c:Class)"
+        "-[:EXPOSES]->(e:Endpoint) DETACH DELETE e",
+        # 3. GraphQL operations
+        "MATCH (f:File {path: $path})-[:DEFINES_CLASS]->(c:Class)"
+        "-[:RESOLVES]->(o:GraphQLOperation) DETACH DELETE o",
+        # 4. Columns
+        "MATCH (f:File {path: $path})-[:DEFINES_CLASS]->(c:Class)"
+        "-[:HAS_COLUMN]->(col:Column) DETACH DELETE col",
+        # 5. Classes
+        "MATCH (f:File {path: $path})-[:DEFINES_CLASS]->(c:Class) DETACH DELETE c",
+        # 6. Functions
+        "MATCH (f:File {path: $path})-[:DEFINES_FUNC]->(fn:Function) DETACH DELETE fn",
+        # 7. Interfaces
+        "MATCH (f:File {path: $path})-[:DEFINES_IFACE]->(i:Interface) DETACH DELETE i",
+        # 8. Atoms
+        "MATCH (f:File {path: $path})-[:DEFINES_ATOM]->(a:Atom) DETACH DELETE a",
+        # 9. Remaining edges
+        "MATCH (f:File {path: $path})-[rel]-() DELETE rel",
+        # 10. File node
+        "MATCH (f:File {path: $path}) DELETE f",
+    ]
+
+    try:
+        with _write_session() as s:
+            for cypher in _DELETE_CASCADE:
+                s.run(cypher, path=path)
+
+            # ── Load new nodes ──────────────────────────────────
+            f = result.file
+            s.run(
+                "MERGE (n:File {path: $path}) "
+                "SET n.package = $package, n.language = $language, "
+                "    n.loc = $loc, n.is_controller = $is_controller, "
+                "    n.is_injectable = $is_injectable, n.is_module = $is_module, "
+                "    n.is_component = $is_component, n.is_entity = $is_entity, "
+                "    n.is_resolver = $is_resolver, n.is_test = $is_test",
+                path=f.path, package=f.package, language=f.language,
+                loc=f.loc, is_controller=f.is_controller,
+                is_injectable=f.is_injectable, is_module=f.is_module,
+                is_component=f.is_component, is_entity=f.is_entity,
+                is_resolver=f.is_resolver, is_test=f.is_test,
+            )
+
+            node_count = 1  # the File node
+
+            for c in result.classes:
+                s.run(
+                    "MERGE (n:Class {id: $id}) "
+                    "SET n.name = $name, n.file = $file, "
+                    "    n.is_controller = $is_controller, "
+                    "    n.is_injectable = $is_injectable, "
+                    "    n.is_module = $is_module, n.is_entity = $is_entity, "
+                    "    n.is_resolver = $is_resolver, "
+                    "    n.is_abstract = $is_abstract, "
+                    "    n.base_path = $base_path, n.table_name = $table_name "
+                    "WITH n "
+                    "MATCH (f:File {path: $file}) "
+                    "MERGE (f)-[:DEFINES_CLASS]->(n)",
+                    id=c.id, name=c.name, file=c.file,
+                    is_controller=c.is_controller,
+                    is_injectable=c.is_injectable,
+                    is_module=c.is_module, is_entity=c.is_entity,
+                    is_resolver=c.is_resolver, is_abstract=c.is_abstract,
+                    base_path=c.base_path, table_name=c.table_name,
+                )
+                node_count += 1
+
+            for fn in result.functions:
+                s.run(
+                    "MERGE (n:Function {id: $id}) "
+                    "SET n.name = $name, n.file = $file, "
+                    "    n.is_component = $is_component, "
+                    "    n.exported = $exported, "
+                    "    n.docstring = $docstring, "
+                    "    n.return_type = $return_type, "
+                    "    n.params_json = $params_json "
+                    "WITH n "
+                    "MATCH (f:File {path: $file}) "
+                    "MERGE (f)-[:DEFINES_FUNC]->(n)",
+                    id=fn.id, name=fn.name, file=fn.file,
+                    is_component=fn.is_component, exported=fn.exported,
+                    docstring=fn.docstring, return_type=fn.return_type,
+                    params_json=fn.params_json,
+                )
+                node_count += 1
+
+            for m in result.methods:
+                s.run(
+                    "MERGE (n:Method {id: $id}) "
+                    "SET n.name = $name, n.file = $file, "
+                    "    n.is_static = $is_static, n.is_async = $is_async, "
+                    "    n.is_constructor = $is_constructor, "
+                    "    n.visibility = $visibility, "
+                    "    n.return_type = $return_type, "
+                    "    n.params_json = $params_json, "
+                    "    n.docstring = $docstring "
+                    "WITH n "
+                    "MATCH (c:Class {id: $class_id}) "
+                    "MERGE (c)-[:HAS_METHOD]->(n)",
+                    id=m.id, name=m.name, file=m.file,
+                    class_id=m.class_id, is_static=m.is_static,
+                    is_async=m.is_async,
+                    is_constructor=m.is_constructor,
+                    visibility=m.visibility,
+                    return_type=m.return_type,
+                    params_json=m.params_json,
+                    docstring=m.docstring,
+                )
+                node_count += 1
+
+            for i in result.interfaces:
+                s.run(
+                    "MERGE (n:Interface {id: $id}) "
+                    "SET n.name = $name, n.file = $file "
+                    "WITH n "
+                    "MATCH (f:File {path: $file}) "
+                    "MERGE (f)-[:DEFINES_IFACE]->(n)",
+                    id=i.id, name=i.name, file=i.file,
+                )
+                node_count += 1
+
+            for ep in result.endpoints:
+                s.run(
+                    "MERGE (e:Endpoint {id: $id}) "
+                    "SET e.method = $method, e.path = $epath, "
+                    "    e.handler = $handler, e.file = $file "
+                    "WITH e "
+                    "MATCH (c:Class {id: $cls}) "
+                    "MERGE (c)-[:EXPOSES]->(e)",
+                    id=ep.id, method=ep.method, epath=ep.path,
+                    handler=ep.handler, file=ep.file,
+                    cls=ep.controller_class,
+                )
+                node_count += 1
+
+            for gql in result.gql_operations:
+                s.run(
+                    "MERGE (o:GraphQLOperation {id: $id}) "
+                    "SET o.type = $type, o.name = $name, "
+                    "    o.return_type = $return_type, "
+                    "    o.handler = $handler, o.file = $file "
+                    "WITH o "
+                    "MATCH (c:Class {id: $cls}) "
+                    "MERGE (c)-[:RESOLVES]->(o)",
+                    id=gql.id, type=gql.op_type, name=gql.name,
+                    return_type=gql.return_type, handler=gql.handler,
+                    file=gql.file, cls=gql.resolver_class,
+                )
+                node_count += 1
+
+            for col in result.columns:
+                s.run(
+                    "MERGE (c:Column {id: $id}) "
+                    "SET c.name = $name, c.type = $type, "
+                    "    c.nullable = $nullable, c.unique = $uniq, "
+                    "    c.primary = $primary, c.generated = $generated "
+                    "WITH c "
+                    "MATCH (e:Class {id: $entity_id}) "
+                    "MERGE (e)-[:HAS_COLUMN]->(c)",
+                    id=col.id, entity_id=col.entity_id,
+                    name=col.name, type=col.type,
+                    nullable=col.nullable, uniq=col.unique,
+                    primary=col.primary, generated=col.generated,
+                )
+                node_count += 1
+
+            for a in result.atoms:
+                s.run(
+                    "MERGE (n:Atom {id: $id}) "
+                    "SET n.name = $name, n.file = $file, n.family = $family "
+                    "WITH n "
+                    "MATCH (f:File {path: $file}) "
+                    "MERGE (f)-[:DEFINES_ATOM]->(n)",
+                    id=a.id, name=a.name, file=a.file, family=a.family,
+                )
+                node_count += 1
+
+            # ── Load intra-file edges ───────────────────────────
+            from .schema import (
+                IMPORTS, IMPORTS_SYMBOL, IMPORTS_EXTERNAL,
+                DEFINES_CLASS, DEFINES_FUNC, DEFINES_IFACE,
+                HAS_METHOD, EXPOSES, HANDLES, INJECTS,
+                EXTENDS, IMPLEMENTS, DECORATED_BY,
+                RENDERS, USES_HOOK,
+                HAS_COLUMN, RELATES_TO, REPOSITORY_OF,
+                RESOLVES, RETURNS, CALLS_ENDPOINT, USES_OPERATION,
+                CALLS,
+                PROVIDES, EXPORTS_PROVIDER, IMPORTS_MODULE,
+                DECLARES_CONTROLLER,
+                TESTS, TESTS_CLASS, HANDLES_EVENT, EMITS_EVENT,
+                LAST_MODIFIED_BY, CONTRIBUTED_BY, OWNED_BY,
+                DEFINES_ATOM, READS_ATOM, WRITES_ATOM, READS_ENV,
+                BELONGS_TO,
+            )
+            _EDGE_WHITELIST = frozenset({
+                IMPORTS, IMPORTS_SYMBOL, IMPORTS_EXTERNAL,
+                DEFINES_CLASS, DEFINES_FUNC, DEFINES_IFACE,
+                HAS_METHOD, EXPOSES, HANDLES, INJECTS,
+                EXTENDS, IMPLEMENTS, DECORATED_BY,
+                RENDERS, USES_HOOK,
+                HAS_COLUMN, RELATES_TO, REPOSITORY_OF,
+                RESOLVES, RETURNS, CALLS_ENDPOINT, USES_OPERATION,
+                CALLS,
+                PROVIDES, EXPORTS_PROVIDER, IMPORTS_MODULE,
+                DECLARES_CONTROLLER,
+                TESTS, TESTS_CLASS, HANDLES_EVENT, EMITS_EVENT,
+                LAST_MODIFIED_BY, CONTRIBUTED_BY, OWNED_BY,
+                DEFINES_ATOM, READS_ATOM, WRITES_ATOM, READS_ENV,
+                BELONGS_TO,
+            })
+
+            edge_count = 0
+            for edge in result.edges:
+                if edge.kind not in _EDGE_WHITELIST:
+                    continue
+
+                if edge.kind == DECORATED_BY:
+                    # Decorator nodes are keyed on name, not id.
+                    # dst_id has shape "dec:<decorator_name>".
+                    dname = edge.dst_id[len("dec:"):]
+                    s.run(
+                        "MERGE (d:Decorator {name: $name})",
+                        name=dname,
+                    )
+                    if edge.src_id.startswith("class:"):
+                        label = "Class"
+                    elif edge.src_id.startswith("func:"):
+                        label = "Function"
+                    elif edge.src_id.startswith("method:"):
+                        label = "Method"
+                    else:
+                        continue
+                    s.run(
+                        f"MATCH (a:{label} {{id: $src}}) "
+                        f"MATCH (d:Decorator {{name: $name}}) "
+                        f"MERGE (a)-[:DECORATED_BY]->(d)",
+                        src=edge.src_id, name=dname,
+                    )
+                else:
+                    s.run(
+                        f"MATCH (a {{id: $src}}) "
+                        f"MATCH (b {{id: $dst}}) "
+                        f"MERGE (a)-[:{edge.kind}]->(b)",
+                        src=edge.src_id, dst=edge.dst_id,
+                    )
+                edge_count += 1
+
+    except ClientError as e:
+        return {"error": f"Neo4j rejected query: {_err_msg(e)}"}
+    except ServiceUnavailable as e:
+        return {"error": f"Neo4j is unreachable: {e}"}
+
+    return {"ok": True, "file": path, "nodes": node_count, "edges": edge_count}
+
+
 # ── Entry point ─────────────────────────────────────────────────────
 
 def main() -> None:
     """Run the stdio MCP server. Closes the driver on exit (if constructed)."""
+    global _allow_write
+    parser = argparse.ArgumentParser(prog="codegraph-mcp")
+    parser.add_argument(
+        "--allow-write", action="store_true",
+        help="Enable write tools (reindex_file, wipe_graph).",
+    )
+    args = parser.parse_args()
+    _allow_write = args.allow_write
     try:
         mcp.run(transport="stdio")
     finally:
