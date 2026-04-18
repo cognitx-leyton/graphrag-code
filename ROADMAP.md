@@ -2,17 +2,18 @@
 
 > **Purpose of this document.** Capture enough context for a fresh agent session (or a human returning after time away) to continue work on codegraph without re-deriving state from scratch. Separate from the user-facing roadmap bullets in `README.md`, which stay short and pitch-oriented.
 >
-> **Last updated:** 2026-04-18 after commits `6d9c028` → `daae936` (MCP write tools shipped as issue #14; incremental re-indexing PR #99 merged to main; version bumped to 0.1.17).
+> **Last updated:** 2026-04-18 after commits `daae936` → `c6460d2` (unresolved imports fix shipped as issue #15; scoped npm packages + tsconfig extends array handled; version bumped to 0.1.18).
 
 ---
 
 ## TL;DR — where we are
 
-- **Branch:** `archon/task-feat-issue-14-mcp-write-tools`. MCP write tools shipped as `daae936`; PR #99 (incremental re-indexing, issue #13) merged to main.
-- **Tests:** 414 passing + 1 deselected (Docker-slow integration test), 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
+- **Branch:** `archon/task-fix-issue-15-unresolved-imports`. Workspace resolver + tsconfig extends fix shipped as `c6460d2`; PR #103 (MCP write tools, issue #14) merged to main; version bumped to 0.1.18.
+- **Tests:** 429 passing + 1 deselected (Docker-slow integration test), 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
 - **Graph indexed:** Twenty CRM is currently loaded into the local Neo4j container at `bolt://localhost:7688` (13,473 files, 2,559 classes, 6,088 methods, 5,562 CALLS, 6,708 hook usages, 4,593 RENDERS).
 - **MCP server:** 13 read-only tools + **2 write tools** (`wipe_graph`, `reindex_file`) gated by `--allow-write` flag + **29 prompt templates** (all Cypher blocks from `queries.md` auto-registered via `_register_query_prompts()`). `codegraph-mcp` console script registered. Smoke-tested via raw JSON-RPC.
-- **Package:** `cognitx-codegraph` v0.1.17 in `pyproject.toml`. Wheel + sdist build cleanly. **Not yet on PyPI** — needs one-time operational setup (Trusted Publisher registration). `release.yml` now waits for propagation and smoke-tests the published version.
+- **Package:** `cognitx-codegraph` v0.1.18 in `pyproject.toml`. Wheel + sdist build cleanly. **Not yet on PyPI** — needs one-time operational setup (Trusted Publisher registration). `release.yml` now waits for propagation and smoke-tests the published version.
+- **Resolver:** Workspace import resolution now handles bare package names and subpath imports for monorepos (`twenty-ui/display` → `packages/twenty-ui/src/display/index.ts`). Scoped npm packages (`@scope/pkg/sub`) resolved correctly. `tsconfig.json` `"extends"` chains followed recursively (including TS 5.0+ array form). Estimated ~8,081 previously-unresolved Twenty workspace imports now route correctly.
 - **CI:** `.github/workflows/arch-check.yml` — every PR to `main` spins up Neo4j, indexes, runs `codegraph arch-check`, fails on architecture violations. Verified live on PR #8 (42s, exit 0).
 - **Onboarding:** `codegraph init` scaffolds everything needed to dogfood codegraph in any repo. Live-tested against 3 fixtures including the real Twenty monorepo (13k files indexed end-to-end).
 - **Python Stage 2:** FastAPI / Flask / Django / SQLAlchemy framework detection + `:Endpoint` nodes. `/trace-endpoint` now works against Python repos.
@@ -20,9 +21,13 @@
 
 ---
 
-## Shipped since the last roadmap update (commit `6d9c028`)
+## Shipped since the last roadmap update (commit `daae936`)
 
 ```
+c6460d2 fix(resolver): handle scoped npm packages and tsconfig extends array
+92b58fe Merge pull request #103 from cognitx-leyton/archon/task-feat-issue-14-mcp-write-tools
+8cf25f7 chore: bump version to 0.1.18
+e94a436 docs(roadmap): update session handoff
 daae936 feat(mcp): add write tools for reindexing and edge loading
 aa48cd0 Merge pull request #99 from cognitx-leyton/archon/task-feat-issue-13-incremental-reindex
 149b955 chore:          bump version to 0.1.17
@@ -86,6 +91,12 @@ edb8cca feat(parser):   extract docstrings, params, and return types for Python
 ```
 
 Thirteen sessions' worth of work grouped by theme:
+
+### Unresolved imports — workspace registry + tsconfig extends chains (issue #15)
+
+- `c6460d2 fix(resolver)` — `resolver.py` gains four key additions: **(1) `PackageConfig.pkg_json_name`** — new optional field populated by reading `"name"` from `package.json` alongside the existing `tsconfig.json` and path-alias loading. **(2) `Resolver._workspace_pkgs`** — registry dict built in `set_path_index()` that maps every package's `pkg_json_name` to its `PackageConfig`; enables O(1) lookup during resolution. **(3) `Resolver._try_workspace(raw)`** — new method that resolves bare workspace import specifiers (`twenty-ui/display`, `@twenty/shared/utils`) by splitting the specifier into `pkg_name` + `subpath`, looking up `_workspace_pkgs`, and probing `src/<subpath>/index.ts` first then the package root (with JS→TS remap). Scoped packages (`@scope/name`) are handled by keeping both segments before the third `/` as the package name. **(4) `Resolver.resolve()` wired** — `_try_workspace()` is called as the final fallback after alias resolution, before giving up and emitting `IMPORTS_EXTERNAL`. **(5) `_read_ts_paths()` extends chains** — now follows `"extends"` recursively with 10-level cycle-cap; parent paths are inherited; child overrides take precedence; TS 5.0+ `"extends": [...]` array form normalised to list before iteration. `cli.py` updated to print `name=<pkg_json_name>` in the index output for packages with a `package.json` name. **15 new tests** in `test_resolver_bugs.py`: `TestWorkspaceResolution` (7 tests: subpath, bare import, nested subpath, no-src fallback, unknown package, alias coexistence, JS remap) + `TestTsconfigExtends` (5 tests: parent inherit, child override, 3-level chain, missing parent, circular) + 3 additional tests for scoped packages and extends-as-array. Test count: 414 → 429.
+
+- `92b58fe merge` + `8cf25f7 chore` — PR #103 (MCP write tools, issue #14) merged to `main`; version bumped to v0.1.18.
 
 ### MCP write tools — `wipe_graph` + `reindex_file` behind `--allow-write` (issue #14)
 
@@ -203,12 +214,12 @@ Beyond unit/integration tests, these were dogfooded against real systems:
 
 | Thing | Value |
 |---|---|
-| Current branch | `archon/task-feat-issue-14-mcp-write-tools` |
+| Current branch | `archon/task-fix-issue-15-unresolved-imports` |
 | Base branch | `main` |
-| Unpushed commits | 1 (`daae936` — MCP write tools, pending PR) |
-| Open PR | Issue #14 write-tools branch pending PR. PR #99 (incremental re-indexing) merged to main. |
-| Working tree | 1 untracked file (`.claude/plans/mcp-write-tools.plan.md`) |
-| Test count | 414 passing + 1 deselected |
+| Unpushed commits | 1 (`c6460d2` — workspace resolver + tsconfig extends fix, pending PR) |
+| Open PR | Issue #15 unresolved-imports branch pending PR. PR #103 (MCP write tools) merged to main. |
+| Working tree | 1 untracked file (`.claude/plans/fix-unresolved-imports.plan.md`) |
+| Test count | 429 passing + 1 deselected |
 | Test runtime | ~16 s |
 | Byte-compile | Clean |
 | Last editable install | After `357ad03`. Re-run `cd codegraph && .venv/bin/pip install -e .` after any `pyproject.toml` edit. |
@@ -385,13 +396,9 @@ The ranking assumes the same `plan → implement → e2e validate → commit` cy
 
 **Gotchas:** Tight coupling to Claude Code's extension API — may require using the official `@anthropic-ai/claude-code` SDK rather than MCP.
 
-#### B6. Investigate the 29% unresolved imports
+~~#### B6. Investigate the 29% unresolved imports~~ **SHIPPED** (`c6460d2`)
 
-**What:** Twenty indexing resolves 70.8% of imports (54,820 / 77,389). Investigate what the 22,569 unresolved are.
-
-**Why:** Edges we're dropping on the floor reduce the value of the graph for every downstream query.
-
-**Scope:** Investigation first. Query: `MATCH (f:File)-[r:IMPORTS_EXTERNAL]->(e:External) RETURN e.specifier, count(f) AS n ORDER BY n DESC LIMIT 50`. Categorize: legit externals (keep), tsconfig path aliases (resolver bug), barrel re-exports (resolver bug). Likely fix is beefing up alias + barrel handling in `resolver.py`.
+Workspace registry + tsconfig extends chains now resolve bare package imports and scoped npm packages. Estimated ~8,081 previously-IMPORTS_EXTERNAL Twenty workspace imports now route to real files. Remaining unresolved are genuine third-party externals (react, apollo, etc.).
 
 ### Tier C — more arch-check policies
 
@@ -419,7 +426,7 @@ Custom Cypher policies are already supported via `[[policies.custom]]` in `.arch
 
 1. **Live Claude Code client verification** (A2 above) — still unverified against a running Claude Code UI. Only smoke-tested via raw JSON-RPC pipe.
 
-2. **Unresolved imports percentage** (B6) — 29% is high; investigation before fix.
+2. ~~**Unresolved imports percentage** (B6)~~ — **SHIPPED** (`c6460d2`). Workspace registry + tsconfig extends chains implemented. Remaining unresolved imports are genuine third-party externals.
 
 3. ~~**Python Stage 2 priority vs. arch-check policy expansion vs. incremental re-indexing**~~ — B1 (Python Stage 2) and B2 (MCP prompts) are now shipped. Next priority: B3 (incremental re-indexing) vs. more arch-check policies vs. B4 (MCP write tools).
 
@@ -472,6 +479,7 @@ Repo-local plans under `.claude/plans/`:
 - `arch-check-suppression.plan.md` — shipped as `9d05a44`.
 - `incremental-reindex.plan.md` — shipped as `06e9873`.
 - `mcp-write-tools.plan.md` — shipped as `daae936`.
+- `fix-unresolved-imports.plan.md` — shipped as `c6460d2`.
 
 Older plans (not in repo): `sunny-giggling-moon.md` (the MCP retriever batch), `framework-detector-port.md`. These live in `~/.claude/plans/` and get overwritten on each `/plan` session unless preserved manually.
 
@@ -555,7 +563,7 @@ asking. Do not merge the open PR #8 without asking.
 | `test_py_parser_calls.py` | 12 | Method-body CALLS emission |
 | `test_py_parser_endpoints.py` | 18 | Python Stage 2 endpoint parsing |
 | `test_py_resolver.py` | 14 | Python import resolution + CALLS wiring + super() |
-| `test_resolver_bugs.py` | 13 | Resolver edge-case regression tests |
+| `test_resolver_bugs.py` | 28 | Resolver edge-case regression tests (+ 15 new: workspace resolution, scoped npm packages, tsconfig extends chains) |
 | `test_loader_partitioning.py` | 3 | Function DECORATED_BY routing |
 | `test_loader_pairing.py` | 6 | TS + Python test-file pairing |
 | `test_arch_check.py` | 50 | Policies + orchestrator + custom policy runner (including coupling_ceiling + orphan_detection + --scope filtering + suppression) |
@@ -563,7 +571,7 @@ asking. Do not merge the open PR #8 without asking.
 | `test_init.py` | 19 | Scaffolder helpers (detection, prompts, render, write, container name uniqueness) |
 | `test_init_integration.py` | 2 (1 slow) | End-to-end scaffold + optional Docker |
 | `test_incremental.py` | 21 | `delete_file_subgraph`, `_file_from_id`, `load(touched_files=...)`, `_git_changed_files`, end-to-end `_run_index --since` wiring |
-| **Total** | **414** | |
+| **Total** | **429** | |
 
 ### Key decisions recorded in commit messages
 
@@ -605,6 +613,10 @@ Grep commit bodies for rationale:
 - Why `reindex_file` validates `edge.kind` against an allowlist before Cypher interpolation (edge kinds come from parsed schema dataclass strings, but validating them prevents injection if a bug or future parser change produced unexpected values; the allowlist is all known `schema.py` edge constants) → `daae936`
 - Why DECORATED_BY edges in `reindex_file` match Decorator nodes by `{name: $name}` not `{id: $dst}` (Decorator nodes have a `name` property but their ID is not stored as a standalone property — it's synthesised from parent ID; matching by name is stable and correct; the src_id prefix routes to the right parent label: `class:` → Class, `func:` → Function, `method:` → Method) → `daae936`
 - Why `reindex_file` only loads intra-file edges, not cross-file edges (cross-file edges require resolving imports against the full graph; doing that inside a single-file tool would require re-running the full resolver, which is a 30s+ operation on large repos; cross-file edges can be refreshed by running a full incremental re-index via `--since`) → `daae936`
+- Why `_try_workspace` splits scoped packages at the third `/` rather than the first (scoped npm packages have two-part names `@scope/pkg`; splitting at the first `/` would give `@scope` as the package name, which is wrong; a second split is applied when `pkg_name` starts with `@` to grab `@scope/pkg` correctly) → `c6460d2`
+- Why `_try_workspace` probes `src/<subpath>/index.ts` before the package root (monorepos almost universally use `src/` as the source root; probing `src/` first avoids false-positive matches against root-level config or build artifacts with the same directory name) → `c6460d2`
+- Why `_read_ts_paths` caps `extends` recursion at 10 levels (the vast majority of real tsconfig chains are 2–3 levels; 10 is enough for pathological cases while preventing runaway recursion in malformed projects; the `_seen` set provides the primary cycle guard, the cap is a secondary defence) → `c6460d2`
+- Why `extends` as an array is normalised to a list before processing (TS 5.0 added array-valued `extends`; treating a string as a single-element list keeps the loop uniform and avoids a separate code path; the existing string-based path is the common case so no performance impact) → `c6460d2`
 - Why `_git_changed_files` treats renamed files as delete-old + add-new (the old path's subgraph must be cleaned so its nodes don't become orphaned; the new path is re-parsed fresh; treating a rename as a single "move" would require a graph rename operation that doesn't exist) → `06e9873`
 - Why `load(touched_files=...)` always writes packages even in incremental mode (Package nodes encode framework-level metadata shared across files; filtering them out to save time could leave the Package table stale if the only changed file was the one that determined the framework) → `06e9873`
 
