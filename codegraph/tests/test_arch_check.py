@@ -910,6 +910,34 @@ def test_apply_suppressions_no_incomplete_flag_when_no_suppression_matches():
     assert p.passed is False
 
 
+def test_invariant_incomplete_implies_not_passed():
+    """Invariant: incomplete_suppression_coverage=True implies passed=False.
+
+    When violation_count > len(sample) and all sample rows are suppressed,
+    unseen violations beyond the sample window keep passed=False.
+    """
+    sample = [{"file": f"f{i}.ts", "deps": 20 + i} for i in range(10)]
+    policies = [
+        PolicyResult(
+            name="coupling_ceiling",
+            passed=False,
+            violation_count=15,  # 5 more than the 10 sample rows
+            sample=sample,
+        ),
+    ]
+    supps = [
+        Suppression(policy="coupling_ceiling", key=f"f{i}.ts", reason="ok")
+        for i in range(10)
+    ]
+    updated, _stale = _apply_suppressions(policies, supps)
+    p = updated[0]
+    assert p.incomplete_suppression_coverage is True
+    assert p.passed is False, (
+        "invariant: incomplete_suppression_coverage=True must imply passed=False"
+    )
+    assert p.violation_count == 5  # 15 total - 10 suppressed = 5 unseen
+
+
 def test_incomplete_suppression_coverage_in_json():
     """The flag appears in JSON output via asdict()."""
     report = ArchReport(

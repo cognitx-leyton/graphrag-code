@@ -587,6 +587,14 @@ def _apply_suppressions(
             p.violation_count > len(p.sample)
             and suppressed_count > 0
         )
+        # Invariant: incomplete=True implies passed=False.
+        # Suppressed rows are drawn from the sample, so
+        # suppressed_count <= len(sample) < violation_count (when
+        # incomplete is True), therefore new_violation_count > 0.
+        assert not (incomplete and new_violation_count == 0), (
+            f"invariant violated: incomplete_suppression_coverage={incomplete} "
+            f"but new_violation_count={new_violation_count}"
+        )
         # Only mark as passing when the full violation count is accounted
         # for.  When violation_count > len(sample) we can't be certain that
         # unseen violations beyond the sample window are also suppressed.
