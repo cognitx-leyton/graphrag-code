@@ -505,6 +505,11 @@ def arch_check(
         help="Repo root used for locating .arch-policies.toml.",
         exists=True, file_okay=False,
     ),
+    scope: Optional[list[str]] = typer.Option(
+        None, "--scope",
+        help="Restrict policies to nodes whose file path starts with this "
+             "prefix. Repeatable. Mirrors --package/-p from 'codegraph index'.",
+    ),
 ) -> None:
     """Run architecture-conformance policies against the live graph.
 
@@ -525,6 +530,7 @@ def arch_check(
         uri, user, password,
         console=None if as_json else console,
         config=arch_cfg,
+        scope=scope,
     )
     if as_json:
         print(report.to_json())

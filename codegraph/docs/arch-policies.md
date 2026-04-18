@@ -329,6 +329,22 @@ pairs = [
 ]
 ```
 
+## Scoping to specific packages
+
+When multiple codebases share a Neo4j instance (common with `codegraph index --no-wipe`), use `--scope` to restrict policies to the packages you indexed:
+
+```bash
+codegraph arch-check --scope codegraph/codegraph --scope codegraph/tests
+```
+
+Each `--scope` value is a path prefix matched against node `file`/`path` properties. Only nodes whose path starts with at least one prefix are included in policy queries. Omitting `--scope` queries the entire graph (original behaviour).
+
+**Interaction with `orphan_detection.path_prefix`**: if `path_prefix` is set in `.arch-policies.toml`, it takes precedence over `--scope` for orphan detection. If `path_prefix` is empty (default), `--scope` is used instead.
+
+**Custom policies**: `--scope` does not apply to `[[policies.custom]]` — custom Cypher is user-authored, so add your own `WHERE` clauses if needed.
+
+---
+
 ## Exit codes
 
 `codegraph arch-check` returns:

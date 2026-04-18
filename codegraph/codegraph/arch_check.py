@@ -48,6 +48,27 @@ from .arch_config import (
 SAMPLE_LIMIT = 10
 
 
+def _scope_filter(
+    var: str, prop: str, scope: list[str] | None,
+) -> tuple[str, dict]:
+    """Return ``(cypher_fragment, params)`` for optional scope filtering.
+
+    *var* is the Cypher variable name (e.g. ``"a"``), *prop* is the property
+    to match (``"path"`` for :label:`File` nodes, ``"file"`` for
+    :label:`Class`/:label:`Function`/:label:`Method` nodes).  Returns an
+    empty fragment when *scope* is ``None`` or empty.
+    """
+    if not scope:
+        return "", {}
+    parts: list[str] = []
+    params: dict[str, str] = {}
+    for i, prefix in enumerate(scope):
+        key = f"_scope{i}"
+        parts.append(f"{var}.{prop} STARTS WITH ${key}")
+        params[key] = prefix
+    return f"({' OR '.join(parts)})", params
+
+
 # ── Result shapes ────────────────────────────────────────────
 
 @dataclass
@@ -89,6 +110,7 @@ def run_arch_check(
     console: Optional[Console] = None,
     config: Optional[ArchConfig] = None,
     repo_root: Optional[Path] = None,
+    scope: list[str] | None = None,
 ) -> ArchReport:
     """Open a driver, evaluate every configured policy, return an :class:`ArchReport`.
 
@@ -96,13 +118,18 @@ def run_arch_check(
     reads ``<repo_root>/.arch-policies.toml`` (``repo_root`` defaults to
     ``Path.cwd()``). Missing config file → all built-in defaults, no custom
     policies.
+
+    ``scope``, when non-empty, restricts every built-in policy to nodes whose
+    ``file`` / ``path`` property starts with at least one of the given
+    prefixes.  Custom policies are *not* filtered — their Cypher is
+    user-authored.
     """
     if config is None:
         config = load_arch_config(repo_root or Path.cwd())
 
     driver = GraphDatabase.driver(uri, auth=(user, password))
     try:
-        policies = _run_all(driver, config)
+        policies = _run_all(driver, config, scope)
     finally:
         driver.close()
 
@@ -112,32 +139,34 @@ def run_arch_check(
     return report
 
 
-def _run_all(driver: Driver, config: ArchConfig) -> list[PolicyResult]:
+def _run_all(
+    driver: Driver, config: ArchConfig, scope: list[str] | None = None,
+) -> list[PolicyResult]:
     """Evaluate every policy in a stable order. Disabled policies emit a marker."""
     out: list[PolicyResult] = []
 
     if config.import_cycles.enabled:
-        out.append(_check_import_cycles(driver, config.import_cycles))
+        out.append(_check_import_cycles(driver, config.import_cycles, scope))
     else:
         out.append(_disabled("import_cycles"))
 
     if config.cross_package.enabled:
-        out.append(_check_cross_package(driver, config.cross_package))
+        out.append(_check_cross_package(driver, config.cross_package, scope))
     else:
         out.append(_disabled("cross_package"))
 
     if config.layer_bypass.enabled:
-        out.append(_check_layer_bypass(driver, config.layer_bypass))
+        out.append(_check_layer_bypass(driver, config.layer_bypass, scope))
     else:
         out.append(_disabled("layer_bypass"))
 
     if config.coupling_ceiling.enabled:
-        out.append(_check_coupling_ceiling(driver, config.coupling_ceiling))
+        out.append(_check_coupling_ceiling(driver, config.coupling_ceiling, scope))
     else:
         out.append(_disabled("coupling_ceiling"))
 
     if config.orphan_detection.enabled:
-        out.append(_check_orphans(driver, config.orphan_detection))
+        out.append(_check_orphans(driver, config.orphan_detection, scope))
     else:
         out.append(_disabled("orphan_detection"))
 
@@ -162,11 +191,16 @@ def _disabled(name: str) -> PolicyResult:
 
 # ── Policies ─────────────────────────────────────────────────
 
-def _check_import_cycles(driver: Driver, cfg: ImportCyclesConfig) -> PolicyResult:
+def _check_import_cycles(
+    driver: Driver, cfg: ImportCyclesConfig, scope: list[str] | None = None,
+) -> PolicyResult:
     """Detect file-level IMPORTS cycles of configurable length."""
     hops = f"*{cfg.min_hops}..{cfg.max_hops}"
+    scope_frag, scope_params = _scope_filter("a", "path", scope)
+    where = f"WHERE {scope_frag}\n" if scope_frag else ""
     sample_cypher = (
         f"MATCH path = (a:File)-[:IMPORTS{hops}]->(a)\n"
+        f"{where}"
         f"WITH [n IN nodes(path) | n.path] AS cycle, length(path) AS hops\n"
         f"RETURN DISTINCT cycle, hops\n"
         f"ORDER BY hops ASC, cycle[0]\n"
@@ -174,11 +208,12 @@ def _check_import_cycles(driver: Driver, cfg: ImportCyclesConfig) -> PolicyResul
     )
     count_cypher = (
         f"MATCH path = (a:File)-[:IMPORTS{hops}]->(a)\n"
+        f"{where}"
         f"RETURN count(DISTINCT path) AS v"
     )
     with driver.session() as s:
-        total = int(s.run(count_cypher).single()["v"] or 0)
-        sample = [dict(r) for r in s.run(sample_cypher, limit=SAMPLE_LIMIT)]
+        total = int(s.run(count_cypher, **scope_params).single()["v"] or 0)
+        sample = [dict(r) for r in s.run(sample_cypher, limit=SAMPLE_LIMIT, **scope_params)]
     return PolicyResult(
         name="import_cycles",
         passed=(total == 0),
@@ -188,27 +223,34 @@ def _check_import_cycles(driver: Driver, cfg: ImportCyclesConfig) -> PolicyResul
     )
 
 
-def _check_cross_package(driver: Driver, cfg: CrossPackageConfig) -> PolicyResult:
+def _check_cross_package(
+    driver: Driver, cfg: CrossPackageConfig, scope: list[str] | None = None,
+) -> PolicyResult:
     """Detect imports that cross a forbidden package boundary."""
+    scope_frag, scope_params = _scope_filter("a", "path", scope)
+    scope_clause = f" AND {scope_frag}" if scope_frag else ""
+
     detected: list[dict] = []
     total = 0
     with driver.session() as s:
         for pair in cfg.pairs:
             count = int(s.run(
                 "MATCH (a:File)-[:IMPORTS]->(b:File) "
-                "WHERE a.package = $a AND b.package = $b "
+                "WHERE a.package = $a AND b.package = $b"
+                f"{scope_clause} "
                 "RETURN count(*) AS v",
-                a=pair.importer, b=pair.importee,
+                a=pair.importer, b=pair.importee, **scope_params,
             ).single()["v"] or 0)
             total += count
             if count and len(detected) < SAMPLE_LIMIT:
                 rows = list(s.run(
                     "MATCH (a:File)-[:IMPORTS]->(b:File) "
-                    "WHERE a.package = $a AND b.package = $b "
+                    "WHERE a.package = $a AND b.package = $b"
+                    f"{scope_clause} "
                     "RETURN a.path AS importer, b.path AS importee "
                     "LIMIT $limit",
                     a=pair.importer, b=pair.importee,
-                    limit=SAMPLE_LIMIT - len(detected),
+                    limit=SAMPLE_LIMIT - len(detected), **scope_params,
                 ))
                 for r in rows:
                     detected.append({
@@ -227,15 +269,20 @@ def _check_cross_package(driver: Driver, cfg: CrossPackageConfig) -> PolicyResul
     )
 
 
-def _check_layer_bypass(driver: Driver, cfg: LayerBypassConfig) -> PolicyResult:
+def _check_layer_bypass(
+    driver: Driver, cfg: LayerBypassConfig, scope: list[str] | None = None,
+) -> PolicyResult:
     """Controllers reaching ``*Repository`` without traversing ``*Service``."""
     labels_or = "|".join(cfg.controller_labels)
     depth = f"*1..{cfg.call_depth}"
+    scope_frag, scope_params = _scope_filter("ctrl", "file", scope)
+    scope_clause = f"  AND {scope_frag}\n" if scope_frag else ""
     sample_cypher = (
         f"MATCH (ctrl:{labels_or})-[:HAS_METHOD]->(m:Method)"
         f"-[:CALLS{depth}]->(target:Method)\n"
         f"MATCH (repo:Class)-[:HAS_METHOD]->(target)\n"
         f"WHERE repo.name ENDS WITH $repo_suffix\n"
+        f"{scope_clause}"
         f"  AND NOT EXISTS {{\n"
         f"    MATCH (ctrl)-[:HAS_METHOD]->(:Method)-[:CALLS{depth}]->(:Method)"
         f"<-[:HAS_METHOD]-(svc:Class)\n"
@@ -251,6 +298,7 @@ def _check_layer_bypass(driver: Driver, cfg: LayerBypassConfig) -> PolicyResult:
         f"-[:CALLS{depth}]->(target:Method)\n"
         f"MATCH (repo:Class)-[:HAS_METHOD]->(target)\n"
         f"WHERE repo.name ENDS WITH $repo_suffix\n"
+        f"{scope_clause}"
         f"  AND NOT EXISTS {{\n"
         f"    MATCH (ctrl)-[:HAS_METHOD]->(:Method)-[:CALLS{depth}]->(:Method)"
         f"<-[:HAS_METHOD]-(svc:Class)\n"
@@ -263,12 +311,14 @@ def _check_layer_bypass(driver: Driver, cfg: LayerBypassConfig) -> PolicyResult:
             count_cypher,
             repo_suffix=cfg.repository_suffix,
             svc_suffix=cfg.service_suffix,
+            **scope_params,
         ).single()["v"] or 0)
         sample = [dict(r) for r in s.run(
             sample_cypher,
             repo_suffix=cfg.repository_suffix,
             svc_suffix=cfg.service_suffix,
             limit=SAMPLE_LIMIT,
+            **scope_params,
         )]
     return PolicyResult(
         name="layer_bypass",
@@ -282,16 +332,22 @@ def _check_layer_bypass(driver: Driver, cfg: LayerBypassConfig) -> PolicyResult:
     )
 
 
-def _check_coupling_ceiling(driver: Driver, cfg: CouplingCeilingConfig) -> PolicyResult:
+def _check_coupling_ceiling(
+    driver: Driver, cfg: CouplingCeilingConfig, scope: list[str] | None = None,
+) -> PolicyResult:
     """Flag files with more than ``cfg.max_imports`` distinct file-level imports."""
+    scope_frag, scope_params = _scope_filter("f", "path", scope)
+    where = f"WHERE {scope_frag}\n" if scope_frag else ""
     count_cypher = (
         "MATCH (f:File)-[:IMPORTS]->(g:File)\n"
+        f"{where}"
         "WITH f, count(g) AS deps\n"
         "WHERE deps > $threshold\n"
         "RETURN count(f) AS v"
     )
     sample_cypher = (
         "MATCH (f:File)-[:IMPORTS]->(g:File)\n"
+        f"{where}"
         "WITH f, count(g) AS deps\n"
         "WHERE deps > $threshold\n"
         "RETURN f.path AS file, deps\n"
@@ -299,9 +355,12 @@ def _check_coupling_ceiling(driver: Driver, cfg: CouplingCeilingConfig) -> Polic
         "LIMIT $limit"
     )
     with driver.session() as s:
-        total = int(s.run(count_cypher, threshold=cfg.max_imports).single()["v"] or 0)
+        total = int(s.run(
+            count_cypher, threshold=cfg.max_imports, **scope_params,
+        ).single()["v"] or 0)
         sample = [dict(r) for r in s.run(
             sample_cypher, threshold=cfg.max_imports, limit=SAMPLE_LIMIT,
+            **scope_params,
         )]
     return PolicyResult(
         name="coupling_ceiling",
@@ -312,7 +371,9 @@ def _check_coupling_ceiling(driver: Driver, cfg: CouplingCeilingConfig) -> Polic
     )
 
 
-def _check_orphans(driver: Driver, cfg: OrphanDetectionConfig) -> PolicyResult:
+def _check_orphans(
+    driver: Driver, cfg: OrphanDetectionConfig, scope: list[str] | None = None,
+) -> PolicyResult:
     """Flag functions/classes/atoms/endpoints with zero inbound references."""
     # Build sub-queries for each requested kind.
     _kind_queries = {
@@ -356,11 +417,18 @@ def _check_orphans(driver: Driver, cfg: OrphanDetectionConfig) -> PolicyResult:
     # Variable used in the prefix filter differs per kind.
     _kind_var = {"function": "f", "class": "c", "atom": "a", "endpoint": "e"}
 
+    # Determine the path filter: explicit path_prefix wins, then --scope,
+    # then no filter.  scope_extra holds any params the scope filter needs.
+    scope_extra: dict = {}
     parts: list[str] = []
     for kind in cfg.kinds:
         tmpl = _kind_queries[kind]
         if cfg.path_prefix:
             pf = f"  AND {_kind_var[kind]}.file STARTS WITH $prefix\n"
+        elif scope:
+            sf, sp = _scope_filter(_kind_var[kind], "file", scope)
+            pf = f"  AND {sf}\n"
+            scope_extra.update(sp)
         else:
             pf = ""
         parts.append(tmpl.replace("{prefix_filter}", pf))
@@ -376,6 +444,7 @@ def _check_orphans(driver: Driver, cfg: OrphanDetectionConfig) -> PolicyResult:
     params: dict = {"limit": SAMPLE_LIMIT}
     if cfg.path_prefix:
         params["prefix"] = cfg.path_prefix
+    params.update(scope_extra)
 
     with driver.session() as s:
         total = int(s.run(count_cypher, **params).single()["v"] or 0)

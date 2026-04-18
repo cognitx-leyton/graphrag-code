@@ -509,3 +509,177 @@ def test_run_arch_check_closes_driver_even_on_failure(monkeypatch):
             "bolt://fake:7687", "neo4j", "pw", console=None, config=ArchConfig(),
         )
     assert fake_driver.closed is True
+
+
+# ── --scope filtering ──────────────────────────────────────────────────
+
+
+def test_import_cycles_with_scope():
+    """Scope adds a WHERE … STARTS WITH clause and passes params."""
+    captured: list[str] = []
+    captured_params: list[dict] = []
+
+    def resolver(cypher: str, **params):
+        captured.append(cypher)
+        captured_params.append(params)
+        return [{"v": 0}] if "count(DISTINCT path)" in cypher else []
+
+    driver = _FakeDriver(resolver)
+    _check_import_cycles(driver, ImportCyclesConfig(), scope=["src/"])
+    all_cypher = "\n".join(captured)
+    assert "STARTS WITH $_scope0" in all_cypher
+    assert any(p.get("_scope0") == "src/" for p in captured_params)
+
+
+def test_import_cycles_with_multiple_scopes():
+    """Multiple scope prefixes produce OR-joined conditions and distinct params."""
+    captured: list[str] = []
+    captured_params: list[dict] = []
+
+    def resolver(cypher: str, **params):
+        captured.append(cypher)
+        captured_params.append(params)
+        return [{"v": 0}] if "count(DISTINCT path)" in cypher else []
+
+    driver = _FakeDriver(resolver)
+    _check_import_cycles(driver, ImportCyclesConfig(), scope=["src/", "lib/"])
+    all_cypher = "\n".join(captured)
+    assert "STARTS WITH $_scope0" in all_cypher
+    assert "STARTS WITH $_scope1" in all_cypher
+    assert " OR " in all_cypher
+    assert any(
+        p.get("_scope0") == "src/" and p.get("_scope1") == "lib/"
+        for p in captured_params
+    )
+
+
+def test_import_cycles_no_scope_no_where():
+    """Without scope, no STARTS WITH clause appears — backwards compat."""
+    captured: list[str] = []
+
+    def resolver(cypher: str, **_params):
+        captured.append(cypher)
+        return [{"v": 0}] if "count(DISTINCT path)" in cypher else []
+
+    driver = _FakeDriver(resolver)
+    _check_import_cycles(driver, ImportCyclesConfig(), scope=None)
+    all_cypher = "\n".join(captured)
+    assert "STARTS WITH" not in all_cypher
+
+
+def test_cross_package_with_scope():
+    captured_params: list[dict] = []
+
+    def resolver(cypher: str, **params):
+        captured_params.append(params)
+        if "count(*) AS v" in cypher:
+            return [{"v": 0}]
+        return []
+
+    driver = _FakeDriver(resolver)
+    _check_cross_package(driver, CrossPackageConfig(), scope=["apps/"])
+    assert any(p.get("_scope0") == "apps/" for p in captured_params)
+
+
+def test_layer_bypass_with_scope():
+    captured: list[str] = []
+    captured_params: list[dict] = []
+
+    def resolver(cypher: str, **params):
+        captured.append(cypher)
+        captured_params.append(params)
+        return [{"v": 0}] if "count(DISTINCT ctrl)" in cypher else []
+
+    driver = _FakeDriver(resolver)
+    _check_layer_bypass(driver, LayerBypassConfig(), scope=["src/"])
+    all_cypher = "\n".join(captured)
+    assert "ctrl.file STARTS WITH $_scope0" in all_cypher
+    assert any(p.get("_scope0") == "src/" for p in captured_params)
+
+
+def test_coupling_ceiling_with_scope():
+    captured: list[str] = []
+    captured_params: list[dict] = []
+
+    def resolver(cypher: str, **params):
+        captured.append(cypher)
+        captured_params.append(params)
+        return [{"v": 0}] if "count(f) AS v" in cypher else []
+
+    driver = _FakeDriver(resolver)
+    _check_coupling_ceiling(driver, CouplingCeilingConfig(), scope=["codegraph/"])
+    all_cypher = "\n".join(captured)
+    # Scope WHERE must appear BEFORE the WITH aggregation
+    for cypher in captured:
+        if "STARTS WITH" in cypher:
+            starts_with_pos = cypher.index("STARTS WITH")
+            with_pos = cypher.index("WITH f, count")
+            assert starts_with_pos < with_pos, \
+                "scope filter must appear before WITH aggregation"
+    assert any(p.get("_scope0") == "codegraph/" for p in captured_params)
+
+
+def test_orphan_detection_scope_overrides_empty_path_prefix():
+    """When path_prefix is empty, scope is used for orphan filtering."""
+    captured_params: list[dict] = []
+
+    def resolver(cypher: str, **params):
+        captured_params.append(params)
+        return [{"v": 0}] if "count(*) AS v" in cypher else []
+
+    driver = _FakeDriver(resolver)
+    _check_orphans(
+        driver,
+        OrphanDetectionConfig(path_prefix=""),
+        scope=["src/"],
+    )
+    assert any(p.get("_scope0") == "src/" for p in captured_params)
+    # No $prefix param should be set
+    assert not any("prefix" in p for p in captured_params)
+
+
+def test_orphan_detection_path_prefix_takes_precedence_over_scope():
+    """Explicit path_prefix wins over --scope."""
+    captured_params: list[dict] = []
+
+    def resolver(cypher: str, **params):
+        captured_params.append(params)
+        return [{"v": 0}] if "count(*) AS v" in cypher else []
+
+    driver = _FakeDriver(resolver)
+    _check_orphans(
+        driver,
+        OrphanDetectionConfig(path_prefix="core/"),
+        scope=["src/"],
+    )
+    assert any(p.get("prefix") == "core/" for p in captured_params)
+    # _scope0 must NOT be set — path_prefix takes precedence
+    assert not any("_scope0" in p for p in captured_params)
+
+
+def test_run_arch_check_passes_scope_to_policies(monkeypatch):
+    """run_arch_check forwards scope to _run_all and all built-in policies."""
+    fake_driver = _constant_driver({
+        "count(DISTINCT path) AS v": [{"v": 0}],
+        "count(*) AS v": [{"v": 0}],
+        "count(DISTINCT ctrl) AS v": [{"v": 0}],
+        "count(f) AS v": [{"v": 0}],
+    })
+    monkeypatch.setattr(arch_check.GraphDatabase, "driver", lambda uri, auth: fake_driver)
+
+    # Capture what _run_all receives
+    original_run_all = arch_check._run_all
+    received_scope = []
+
+    def spy_run_all(driver, config, scope=None):
+        received_scope.append(scope)
+        return original_run_all(driver, config, scope)
+
+    monkeypatch.setattr(arch_check, "_run_all", spy_run_all)
+
+    run_arch_check(
+        "bolt://fake:7687", "neo4j", "pw",
+        console=None, config=ArchConfig(),
+        scope=["x/", "y/"],
+    )
+    assert received_scope == [["x/", "y/"]]
