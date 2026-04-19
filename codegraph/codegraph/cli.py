@@ -558,7 +558,7 @@ def _format_stat_line(stats: dict[str, Any]) -> str:
 
 
 _STAT_PLACEHOLDER_RE = re.compile(
-    r"(<!-- codegraph:stats-begin -->\n).*?(\n<!-- codegraph:stats-end -->)",
+    r"(<!-- codegraph:stats-begin -->\r?\n).*?(\r?\n<!-- codegraph:stats-end -->)",
     re.DOTALL,
 )
 
@@ -576,7 +576,8 @@ def _update_stat_placeholders(
             if not quiet:
                 console.print(f"  [yellow]skip[/] {path} (not found)")
             continue
-        content = path.read_text(encoding="utf-8")
+        with open(path, encoding="utf-8", newline="") as fh:
+            content = fh.read()
         new_content = _STAT_PLACEHOLDER_RE.sub(
             lambda m: f"{m.group(1)}{stat_line}{m.group(2)}", content,
         )
@@ -584,7 +585,8 @@ def _update_stat_placeholders(
             if not quiet:
                 console.print(f"  [dim]skip[/] {path} (no change)")
             continue
-        path.write_text(new_content, encoding="utf-8")
+        with open(path, "w", encoding="utf-8", newline="") as fh:
+            fh.write(new_content)
         updated += 1
         if not quiet:
             console.print(f"  [green]updated[/] {path}")
