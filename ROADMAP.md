@@ -2,14 +2,14 @@
 
 > **Purpose of this document.** Capture enough context for a fresh agent session (or a human returning after time away) to continue work on codegraph without re-deriving state from scratch. Separate from the user-facing roadmap bullets in `README.md`, which stay short and pitch-oriented.
 >
-> **Last updated:** 2026-04-19 after commits `0a676e1` → `9192514` (fix(ownership): prevent rooted CODEOWNERS pattern false-positives on sibling dirs — closes #175; 494 tests passing, v0.1.45).
+> **Last updated:** 2026-04-19 after commits `9192514` → `d91b45e` (fix(ownership): use unit separator (0x1f) instead of pipe to delimit git log fields — closes #170; 495 tests passing, v0.1.46).
 
 ---
 
 ## TL;DR — where we are
 
-- **Branch:** `archon/task-fix-issue-175`. Fixed false-positive ownership matches for rooted CODEOWNERS patterns: `/docs` (and `/docs/`) no longer incorrectly matched `docs-internal/` — replaced `pat + "*"` with `base.rstrip("/") + "/*"` in `_co_pattern_match` (`ownership.py:157-160`). Added 4 parametrized regression tests covering both slash variants against child paths (should match) and sibling paths (should not match) — closes issue #175. Version at v0.1.45.
-- **Tests:** 494 passing (1 excluded: MCP test requires `fastmcp` optional dep not installed in this env), 0 warnings. 4 new regression tests for issue #175 added to `tests/test_ownership.py`. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
+- **Branch:** `archon/task-fix-issue-170`. Fixed ownership git log parsing breakage when an author name contains a pipe character (`|`): replaced the pipe delimiter in the `--pretty=format:` string with ASCII Unit Separator (`\x1f`, 0x1f) in `ownership.py` (lines 40 and 67). Updated 2 existing test mocks to use the new delimiter and added a regression test `test_collect_ownership_pipe_in_author_name` that verifies `Jo|hn Doe` parses correctly — closes issue #170. Version at v0.1.46.
+- **Tests:** 495 passing (1 excluded: MCP test requires `fastmcp` optional dep not installed in this env), 0 warnings. 1 new regression test for issue #170 added to `tests/test_ownership.py`. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
 - **Graph indexed:** Twenty CRM is currently loaded into the local Neo4j container at `bolt://localhost:7688` (13,473 files, 2,559 classes, 6,088 methods, 5,562 CALLS, 6,708 hook usages, 4,593 RENDERS).
 - **MCP server:** 13 read-only tools + **2 write tools** (`wipe_graph`, `reindex_file`) gated by `--allow-write` flag + **29 prompt templates** (all Cypher blocks from `queries.md` auto-registered via `_register_query_prompts()`). `codegraph-mcp` console script registered. Smoke-tested via raw JSON-RPC.
 - **Package:** `cognitx-codegraph` v0.1.32 in `pyproject.toml`. Wheel + sdist build cleanly. **Not yet on PyPI** — needs one-time operational setup (Trusted Publisher registration). `release.yml` now waits for propagation and smoke-tests the published version.
@@ -21,9 +21,12 @@
 
 ---
 
-## Shipped since the last roadmap update (commit `0a676e1`)
+## Shipped since the last roadmap update (commit `9192514`)
 
 ```
+d91b45e fix(ownership): use unit separator (0x1f) instead of pipe to delimit git log fields
+186dc7e chore: bump version to 0.1.46
+34b79bb Merge pull request #186 from cognitx-leyton/archon/task-fix-issue-175
 9192514 fix(ownership): prevent rooted CODEOWNERS pattern false-positives on sibling dirs
 79bc84d chore: bump version to 0.1.45
 ef625a0 feat(workflow): fix-and-file replaces file-issues — fix small bugs inline
@@ -211,6 +214,10 @@ edb8cca feat(parser):   extract docstrings, params, and return types for Python
 ```
 
 Forty-one sessions' worth of work grouped by theme:
+
+### Ownership module — pipe-safe git log delimiter (issue #170)
+
+- `d91b45e fix(ownership)` — `collect_ownership` in `ownership.py` used `|` as the separator in the `git log --pretty=format:` string (`%H|%ae|%an|%at`). Author names containing a literal `|` (e.g. `Jo|hn Doe`) caused `payload.split("|", 3)` to produce 5 parts instead of 4, crashing the subsequent `int(ts)` conversion and silently dropping the commit. Fix replaces the delimiter with ASCII Unit Separator (`\x1f`, 0x1f) in both the format string (line 40) and the split call (line 67). Updated 2 existing test mocks to use `\x1f`. Added regression test `test_collect_ownership_pipe_in_author_name` confirming that `Jo|hn Doe` parses to correct `authors`, `last_modified`, and `contributors` output. Code review: 0 actionable issues. Arch-check: 5/5 policies pass. Test count: 495 (1 new). Version bumped to v0.1.46.
 
 ### Ownership module — rooted CODEOWNERS pattern false-positive fix (issue #175)
 
@@ -504,12 +511,12 @@ Beyond unit/integration tests, these were dogfooded against real systems:
 
 | Thing | Value |
 |---|---|
-| Current branch | `archon/task-fix-issue-181` |
+| Current branch | `archon/task-fix-issue-170` |
 | Base branch | `main` |
-| Unpushed commits | 1 (`5d01a60` — fix(ownership): harden ownership contract to never return None, pending PR) |
-| Open PR | None. PR #182 (issues #181, #180 — ownership contract hardening + shallow-copy fix) merged to main. |
+| Unpushed commits | 1 (`d91b45e` — fix(ownership): use unit separator (0x1f) instead of pipe to delimit git log fields, pending PR) |
+| Open PR | None. PR #186 (issue #175 — rooted CODEOWNERS false-positive fix) merged to main. |
 | Working tree | Clean |
-| Test count | 490 passing + 1 deselected |
+| Test count | 495 passing + 1 deselected |
 | Test runtime | ~16 s |
 | Byte-compile | Clean |
 | Last editable install | After `357ad03`. Re-run `cd codegraph && .venv/bin/pip install -e .` after any `pyproject.toml` edit. |
