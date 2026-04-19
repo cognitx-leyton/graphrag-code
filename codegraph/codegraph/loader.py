@@ -162,74 +162,42 @@ class Neo4jLoader:
             s.run("MATCH (n) DETACH DELETE n")
 
     def delete_file_subgraph(self, paths: list[str]) -> int:
-        """Delete :File nodes for *paths* and all their children (Class, Method, Function, etc.).
+        """Delete :File nodes for *paths* and all owned children.
+
+        Uses a 3-step DETACH DELETE cascade that is resilient to schema
+        changes (new relationship types are handled automatically):
+
+        1. Grandchildren of owned classes (Methods, Endpoints, Columns, …)
+        2. Direct owned children (Classes, Functions, Interfaces, Atoms)
+        3. File nodes themselves (DETACH DELETE auto-removes IMPORTS, etc.)
 
         Used by incremental re-indexing (``--since``) to clean up stale data
-        before re-loading touched files. Returns the number of paths processed.
+        before re-loading touched files.  Returns the number of paths processed.
         """
         if not paths:
             return 0
         rows = [dict(path=p) for p in paths]
         with self.driver.session(database=self.database) as s:
-            # 1. Methods (children of classes in these files)
+            # 1. Grandchildren of owned classes (Methods, Endpoints, GQL ops,
+            #    Columns, etc.) — excludes Class (cross-file EXTENDS/INJECTS)
+            #    and Decorator (shared singletons).
             _run(s, """
                 UNWIND $rows AS r
-                MATCH (f:File {path: r.path})-[:DEFINES_CLASS]->(c:Class)-[:HAS_METHOD]->(m:Method)
-                DETACH DELETE m
+                MATCH (f:File {path: r.path})-[:DEFINES_CLASS]->(c:Class)-->(child)
+                WHERE NOT child:Class AND NOT child:Decorator
+                DETACH DELETE child
             """, rows)
-            # 2. Endpoints (children of classes)
+            # 2. Direct owned children (Classes, Functions, Interfaces, Atoms)
             _run(s, """
                 UNWIND $rows AS r
-                MATCH (f:File {path: r.path})-[:DEFINES_CLASS]->(c:Class)-[:EXPOSES]->(e:Endpoint)
-                DETACH DELETE e
+                MATCH (f:File {path: r.path})-[:DEFINES_CLASS|DEFINES_FUNC|DEFINES_IFACE|DEFINES_ATOM]->(child)
+                DETACH DELETE child
             """, rows)
-            # 3. GraphQL operations (children of classes)
-            _run(s, """
-                UNWIND $rows AS r
-                MATCH (f:File {path: r.path})-[:DEFINES_CLASS]->(c:Class)-[:RESOLVES]->(o:GraphQLOperation)
-                DETACH DELETE o
-            """, rows)
-            # 4. Columns (children of entity classes)
-            _run(s, """
-                UNWIND $rows AS r
-                MATCH (f:File {path: r.path})-[:DEFINES_CLASS]->(c:Class)-[:HAS_COLUMN]->(col:Column)
-                DETACH DELETE col
-            """, rows)
-            # 5. Classes themselves
-            _run(s, """
-                UNWIND $rows AS r
-                MATCH (f:File {path: r.path})-[:DEFINES_CLASS]->(c:Class)
-                DETACH DELETE c
-            """, rows)
-            # 6. Functions
-            _run(s, """
-                UNWIND $rows AS r
-                MATCH (f:File {path: r.path})-[:DEFINES_FUNC]->(fn:Function)
-                DETACH DELETE fn
-            """, rows)
-            # 7. Interfaces
-            _run(s, """
-                UNWIND $rows AS r
-                MATCH (f:File {path: r.path})-[:DEFINES_IFACE]->(i:Interface)
-                DETACH DELETE i
-            """, rows)
-            # 8. Atoms
-            _run(s, """
-                UNWIND $rows AS r
-                MATCH (f:File {path: r.path})-[:DEFINES_ATOM]->(a:Atom)
-                DETACH DELETE a
-            """, rows)
-            # 9. Remaining edges from/to each file
-            _run(s, """
-                UNWIND $rows AS r
-                MATCH (f:File {path: r.path})-[rel]-()
-                DELETE rel
-            """, rows)
-            # 10. The file nodes themselves
+            # 3. File nodes (DETACH DELETE auto-removes IMPORTS, BELONGS_TO, etc.)
             _run(s, """
                 UNWIND $rows AS r
                 MATCH (f:File {path: r.path})
-                DELETE f
+                DETACH DELETE f
             """, rows)
         return len(paths)
 
