@@ -11,6 +11,14 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+_EMPTY_OWNERSHIP: dict = {
+    "authors": [],
+    "teams": [],
+    "last_modified": [],
+    "contributors": [],
+    "owned_by": [],
+}
+
 
 def collect_ownership(repo_root: Path, indexed_files: set[str]) -> dict:
     """Build authors/teams/last_modified/contributors/owned_by from git + CODEOWNERS."""
@@ -26,7 +34,7 @@ def collect_ownership(repo_root: Path, indexed_files: set[str]) -> dict:
         )
     except (OSError, subprocess.SubprocessError) as exc:
         logger.warning("collect_ownership: git log failed: %s", exc)
-        return {}
+        return dict(_EMPTY_OWNERSHIP)
 
     if proc.returncode != 0:
         logger.warning(
@@ -34,7 +42,7 @@ def collect_ownership(repo_root: Path, indexed_files: set[str]) -> dict:
             proc.returncode,
             proc.stderr.strip(),
         )
-        return {}
+        return dict(_EMPTY_OWNERSHIP)
 
     log_text = proc.stdout
 

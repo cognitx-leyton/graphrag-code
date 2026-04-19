@@ -8,6 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from codegraph.ownership import (
+    _EMPTY_OWNERSHIP,
     _co_pattern_match,
     _match_codeowners,
     _parse_codeowners,
@@ -57,13 +58,13 @@ def test_contributors_deterministic_on_tie(tmp_path: Path) -> None:
 # --- Issue #166: non-zero git exit code returns empty ---
 
 def test_collect_ownership_git_nonzero_exit(tmp_path: Path) -> None:
-    """Non-zero git exit code must return empty dict, not silently continue."""
+    """Non-zero git exit code must return empty ownership dict, not silently continue."""
     proc = subprocess.CompletedProcess(
         args=[], returncode=128, stdout="", stderr="fatal: not a git repository",
     )
     with patch("codegraph.ownership.subprocess.run", return_value=proc):
         result = collect_ownership(tmp_path, {"src/app.py"})
-    assert result == {}
+    assert result == dict(_EMPTY_OWNERSHIP)
 
 
 # --- Issue #159: warnings on silent failures ---
@@ -75,7 +76,7 @@ def test_collect_ownership_logs_on_os_error(tmp_path: Path, caplog) -> None:
         side_effect=OSError("git not found"),
     ):
         result = collect_ownership(tmp_path, {"src/app.py"})
-    assert result == {}
+    assert result == dict(_EMPTY_OWNERSHIP)
     assert "git log failed" in caplog.text
 
 
@@ -138,13 +139,13 @@ def test_match_codeowners_no_matching_rule() -> None:
 
 
 def test_collect_ownership_subprocess_timeout(tmp_path: Path, caplog) -> None:
-    """subprocess.TimeoutExpired must return {} and log a warning."""
+    """subprocess.TimeoutExpired must return empty ownership dict and log a warning."""
     with patch(
         "codegraph.ownership.subprocess.run",
         side_effect=subprocess.TimeoutExpired(cmd="git", timeout=120),
     ):
         result = collect_ownership(tmp_path, {"src/app.py"})
-    assert result == {}
+    assert result == dict(_EMPTY_OWNERSHIP)
     assert "git log failed" in caplog.text
 
 
