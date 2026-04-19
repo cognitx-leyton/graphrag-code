@@ -535,12 +535,13 @@ nodes:
       cd "$REPO/codegraph"
       echo "=== Final Gate ==="
 
-      # Ensure venv exists (worktrees don't have it)
+      # Ensure venv exists and deps are current
       if [ ! -f .venv/bin/python ]; then
         echo "Creating venv..."
         python3 -m venv .venv
-        .venv/bin/pip install -e ".[python,mcp,test]" -q
       fi
+      # Always re-install to pick up any dependency changes from implementation
+      .venv/bin/pip install -e ".[python,mcp,test]" -q 2>&1
 
       python3 -m compileall codegraph/ -q 2>&1 && echo "PASS: byte-compile" || exit 1
       .venv/bin/python -m pytest tests/ -q 2>&1 && echo "PASS: tests" || exit 1
