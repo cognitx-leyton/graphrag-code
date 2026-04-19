@@ -2,14 +2,14 @@
 
 > **Purpose of this document.** Capture enough context for a fresh agent session (or a human returning after time away) to continue work on codegraph without re-deriving state from scratch. Separate from the user-facing roadmap bullets in `README.md`, which stay short and pitch-oriented.
 >
-> **Last updated:** 2026-04-19 after commits `fb98121` → `573b86d` (test(ownership): pattern-matching and edge-case coverage for issue #172; 490 tests passing, v0.1.42).
+> **Last updated:** 2026-04-19 after commits `eab0758` → `a1d7cb9` (fix(ownership): return empty list instead of empty dict on all error paths — closes #176 and #171; 490 tests passing, v0.1.43).
 
 ---
 
 ## TL;DR — where we are
 
-- **Branch:** `archon/task-fix-issue-172`. Added 5 new test functions to `codegraph/tests/test_ownership.py` covering previously-untested ownership internals: `test_co_pattern_match_cases` (6 parametrized cases for bare/rooted/path/double-star globs), `test_match_codeowners_last_rule_wins`, `test_match_codeowners_no_matching_rule`, `test_collect_ownership_subprocess_timeout` (caplog warning check), `test_collect_ownership_empty_git_log` (all 5 dict keys present with empty values). No production code changes. Version at v0.1.42.
-- **Tests:** 490 passing (1 excluded: MCP test requires `fastmcp` optional dep not installed in this env), 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
+- **Branch:** `archon/task-fix-issue-176`. Fixed `ownership.py` to return a fully-typed empty dict (all 5 keys with `[]` values) instead of `{}` on error paths — closes issues #176 and #171. Updated 3 test assertions and 2 docstrings. Version at v0.1.43.
+- **Tests:** 490 passing (1 excluded: MCP test requires `fastmcp` optional dep not installed in this env), 0 warnings. No new tests in this session — existing error-path tests updated. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
 - **Graph indexed:** Twenty CRM is currently loaded into the local Neo4j container at `bolt://localhost:7688` (13,473 files, 2,559 classes, 6,088 methods, 5,562 CALLS, 6,708 hook usages, 4,593 RENDERS).
 - **MCP server:** 13 read-only tools + **2 write tools** (`wipe_graph`, `reindex_file`) gated by `--allow-write` flag + **29 prompt templates** (all Cypher blocks from `queries.md` auto-registered via `_register_query_prompts()`). `codegraph-mcp` console script registered. Smoke-tested via raw JSON-RPC.
 - **Package:** `cognitx-codegraph` v0.1.32 in `pyproject.toml`. Wheel + sdist build cleanly. **Not yet on PyPI** — needs one-time operational setup (Trusted Publisher registration). `release.yml` now waits for propagation and smoke-tests the published version.
@@ -21,9 +21,15 @@
 
 ---
 
-## Shipped since the last roadmap update (commit `fb98121`)
+## Shipped since the last roadmap update (commit `eab0758`)
 
 ```
+a1d7cb9 fix(ownership): return empty list instead of empty dict on all error paths
+7fc679d Merge pull request #177 from cognitx-leyton/archon/task-fix-issue-172
+efdf8f2 Merge remote-tracking branch 'origin/main' into hotfix
+6b76e9b Merge pull request #178 from cognitx-leyton/dev
+a8a5a53 fix(workflow): close-fixed-issues also catches out-of-scope + orphaned done
+eab0758 docs(roadmap): update session handoff
 573b86d test(ownership): add pattern-matching and edge-case coverage for issue #172
 45b24b9 Merge pull request #173 from cognitx-leyton/archon/task-fix-issue-167
 0205114 chore: bump version to 0.1.42
@@ -192,7 +198,11 @@ edb8cca feat(parser):   extract docstrings, params, and return types for Python
 09822fa docs(roadmap):  session handoff document for continuing work across agents
 ```
 
-Thirty-seven sessions' worth of work grouped by theme:
+Thirty-eight sessions' worth of work grouped by theme:
+
+### Ownership module — typed empty return on error paths (issues #176, #171)
+
+- `a1d7cb9 fix(ownership)` — `collect_ownership()` in `codegraph/codegraph/ownership.py` previously returned bare `{}` on two error paths (the `OSError`/`SubprocessError` catch at line 29 and the `returncode != 0` branch at line 37). Callers pattern-match or iterate over the result, so `{}` — while falsy — is structurally different from a successful empty-git-log return which includes all 5 keys. **(1)** Added `_EMPTY_OWNERSHIP` module-level constant with all 5 keys (`authors`, `teams`, `last_modified`, `contributors`, `owned_by`) set to `[]`. **(2)** Both error-path `return {}` statements replaced with `return dict(_EMPTY_OWNERSHIP)` (shallow copy so callers can't mutate the constant). **(3)** `tests/test_ownership.py` — 3 test assertions updated from `== {}` to `== dict(_EMPTY_OWNERSHIP)`: `test_collect_ownership_git_nonzero_exit`, `test_collect_ownership_logs_on_os_error`, `test_collect_ownership_subprocess_timeout`. 2 test docstrings updated (previously said "returns `{}`"). Import line updated to include `_EMPTY_OWNERSHIP`. No production callers (`cli.py:392`, `loader.py:507`) needed changes — both iterate or UNWIND the value, which is a no-op on an empty list. Code-review: 0 actionable issues (reviewer raised 2 non-issues explicitly accepted by plan: shared list refs via shallow copy, and `if ownership:` truthiness change — both verified safe). Arch-check: 5/5 policies pass. Test count: 490 (unchanged). Version bumped to v0.1.43 (`chore: bump version` commit). PR #177 merged (`7fc679d`). Workflow fix `a8a5a53` also lands: `close-fixed-issues` now catches `out-of-scope` and `orphaned done` states in addition to the previous `done` + `closed` states.
 
 ### Ownership module — pattern-matching and edge-case test coverage (issue #172)
 
@@ -470,12 +480,12 @@ Beyond unit/integration tests, these were dogfooded against real systems:
 
 | Thing | Value |
 |---|---|
-| Current branch | `archon/task-fix-issue-167` |
+| Current branch | `archon/task-fix-issue-176` |
 | Base branch | `main` |
-| Unpushed commits | 1 (`22d4608` — fix OSError catch in `_parse_codeowners` and log prefix, pending PR) |
-| Open PR | None. PR #169 (issues #166, #167 — deterministic ordering + git exit-code check) merged to main. |
+| Unpushed commits | 1 (`a1d7cb9` — fix(ownership): return empty list instead of empty dict on all error paths, pending PR) |
+| Open PR | None. PR #177 (issues #176, #171 — typed empty return on ownership error paths) merged to main. |
 | Working tree | Clean |
-| Test count | 480 passing + 1 deselected |
+| Test count | 490 passing + 1 deselected |
 | Test runtime | ~16 s |
 | Byte-compile | Clean |
 | Last editable install | After `357ad03`. Re-run `cd codegraph && .venv/bin/pip install -e .` after any `pyproject.toml` edit. |
