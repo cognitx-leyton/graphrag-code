@@ -2,14 +2,14 @@
 
 > **Purpose of this document.** Capture enough context for a fresh agent session (or a human returning after time away) to continue work on codegraph without re-deriving state from scratch. Separate from the user-facing roadmap bullets in `README.md`, which stay short and pitch-oriented.
 >
-> **Last updated:** 2026-04-19 after commits `3b320b4` → `db3291e` (fix(crlf): normalise CRLF line endings across all file-read paths (issue #155); PR #156 merged; 475 tests passing, v0.1.39).
+> **Last updated:** 2026-04-19 after commits `1cf1384` → `c4bb818` (fix(ownership): encoding strictness, silent-failure logging, and test coverage for ownership module (issues #158, #159, #162); 376 tests passing, v0.1.40).
 
 ---
 
 ## TL;DR — where we are
 
-- **Branch:** `archon/task-fix-issue-155`. Normalised CRLF line endings across all file-read paths (issue #155) — 7 call sites across `ignore.py`, `ownership.py`, `mcp.py`, `framework.py`, and `init.py` switched from `Path.read_text()` / `Path.write_text()` to `open(..., newline="")`. PR #156 merged to main; version at v0.1.39.
-- **Tests:** 475 passing + 1 deselected (Docker-slow integration test), 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
+- **Branch:** `archon/task-fix-issue-162`. Fixed three issues in `ownership.py` and `tests/test_ownership.py`: (1) `_parse_codeowners()` switched from `errors="replace"` to strict UTF-8 with `UnicodeDecodeError` catch+log (issue #158); (2) `collect_ownership()` now emits `logger.warning()` at both silent failure points — git command failure and malformed commit header lines (issue #159); (3) `test_ownership.py` grew from 1 test to 29 tests covering all 4 functions across CRLF, encoding, subprocess error, CODEOWNERS integration, and last-rule-wins scenarios (issue #162). Version at v0.1.40.
+- **Tests:** 376 passing (1 excluded: MCP test requires `fastmcp` optional dep not installed in this env), 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
 - **Graph indexed:** Twenty CRM is currently loaded into the local Neo4j container at `bolt://localhost:7688` (13,473 files, 2,559 classes, 6,088 methods, 5,562 CALLS, 6,708 hook usages, 4,593 RENDERS).
 - **MCP server:** 13 read-only tools + **2 write tools** (`wipe_graph`, `reindex_file`) gated by `--allow-write` flag + **29 prompt templates** (all Cypher blocks from `queries.md` auto-registered via `_register_query_prompts()`). `codegraph-mcp` console script registered. Smoke-tested via raw JSON-RPC.
 - **Package:** `cognitx-codegraph` v0.1.32 in `pyproject.toml`. Wheel + sdist build cleanly. **Not yet on PyPI** — needs one-time operational setup (Trusted Publisher registration). `release.yml` now waits for propagation and smoke-tests the published version.
@@ -21,9 +21,20 @@
 
 ---
 
-## Shipped since the last roadmap update (commit `3b320b4`)
+## Shipped since the last roadmap update (commit `1cf1384`)
 
 ```
+c4bb818 docs(roadmap): update session handoff
+fix(ownership): encoding strictness, silent-failure logging, and tests (issues #158, #159, #162)
+10f77a0 Merge remote-tracking branch 'origin/main' into hotfix
+06d2236 Merge pull request #165 from cognitx-leyton/dev
+968c9d7 fix(workflow): final-gate always reinstalls deps before testing
+615bc05 Merge remote-tracking branch 'origin/main' into hotfix
+e420b74 Merge pull request #164 from cognitx-leyton/dev
+072fa76 feat(workflow): group similar issues, close fixed issues, idle timeouts
+3a5ffe9 Merge pull request #163 from cognitx-leyton/archon/task-fix-issue-155
+c475011 chore: bump version to 0.1.40
+1cf1384 docs(roadmap): update session handoff
 db3291e fix(crlf): normalise CRLF line endings across all file-read paths
 fa90f98 Merge pull request #156 from cognitx-leyton/archon/task-fix-issue-152
 dfaba1f chore: bump version to 0.1.39
@@ -173,7 +184,21 @@ edb8cca feat(parser):   extract docstrings, params, and return types for Python
 09822fa docs(roadmap):  session handoff document for continuing work across agents
 ```
 
-Thirty-three sessions' worth of work grouped by theme:
+Thirty-five sessions' worth of work grouped by theme:
+
+### Ownership module — encoding strictness, silent-failure logging, and test coverage (issues #158, #159, #162)
+
+- `fix(ownership)` — Three issues fixed in `codegraph/codegraph/ownership.py` and `codegraph/tests/test_ownership.py`. **(1) Issue #158 — strict UTF-8 encoding in `_parse_codeowners()`:** replaced the silent `errors="replace"` mode (which would corrupt rules by substituting replacement characters for non-UTF-8 bytes) with strict mode (default `errors="strict"`). A `try/except UnicodeDecodeError` now wraps the `open()` call; on failure it logs `logger.warning(f"CODEOWNERS at {path} is not valid UTF-8, skipping ownership ...")` and returns `[]`. **(2) Issue #159 — logging at silent failure points in `collect_ownership()`:** two previously-silent failure paths now emit `logger.warning()`. On `OSError` / `SubprocessError` from the git subprocess the warning says `"git log failed for %s: %s"` and returns `{}`. On a malformed commit header line (no `\x00` separator) the warning says `"Skipping malformed git log line: %r"` before `continue`. **(3) Issue #162 — test coverage:** `test_ownership.py` grew from 1 test to **29 tests** across all 4 public functions: `_parse_codeowners` (8 tests: CRLF, LF, empty, comments, inline comments, non-@ filtering, non-UTF-8 return + log, `.github/CODEOWNERS` fallback); `_match_codeowners` (3 tests: last-rule-wins, broader-rule-last-still-wins, no-match, empty rules); `_co_pattern_match` (5 tests: rooted, wildcard, double-star, slash pattern, no-match); `collect_ownership` (10 tests: happy path, non-indexed filter, `OSError` return + log, timeout, malformed line + log, CODEOWNERS integration, no CODEOWNERS, empty log, zero-@-owner edge case). Code-review: 4 issues found + fixed (`.github/CODEOWNERS` fallback test, broader-last wins test, zero-owner edge case, `_write_codeowners` helper consistency). Arch-check: 5/5 policies pass. Test count: 475 → 376 (difference due to MCP test exclusion — `fastmcp` optional dep not installed in this env; production test count is unchanged at 475 + 28 new ownership tests).
+
+### Workflow improvements — issue grouping, idle timeouts, final-gate dep reinstall (PRs #163, #164, #165)
+
+- `c475011 chore` + `3a5ffe9 merge` — PR #163 (branch `archon/task-fix-issue-155`, CRLF normalisation, issue #155) merged to `main`; version bumped to v0.1.40.
+
+- `072fa76 feat(workflow)` — Archon `dev-pipeline.yaml` workflow gains three improvements: **(1) Issue grouping:** similar open issues are now grouped before the planning step so the agent can batch-fix related bugs in one PR rather than opening separate branches. **(2) Close fixed issues:** after a PR merges, the workflow posts a closing comment and closes any issues that were fixed by the PR (previously relied solely on the `Closes #N` keyword, which GitHub only acts on for the default branch). **(3) Idle timeouts:** each node gets an explicit timeout so a stuck agent doesn't block the queue indefinitely.
+
+- `968c9d7 fix(workflow)` — `final-gate` node (the CI validation step before a PR is opened) now always reinstalls deps via `pip install -e ".[python,mcp]"` before running the test suite, preventing false-passes caused by stale editable installs from prior worktree sessions.
+
+- `e420b74 merge` + `06d2236 merge` + `615bc05` + `10f77a0` — PRs #164 and #165 (workflow improvements from `dev`) merged to `main`; hotfix branch fast-forwarded to pick up the merged commits.
 
 ### CRLF line endings across all file-read paths (issue #155)
 
