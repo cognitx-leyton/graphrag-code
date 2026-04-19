@@ -281,6 +281,26 @@ def test_update_replaces_content(tmp_path: Path):
     assert "rest of file" in content
 
 
+def test_update_replaces_content_crlf(tmp_path: Path):
+    """Placeholders with Windows CRLF line endings are matched and replaced."""
+    md = tmp_path / "test.md"
+    md.write_bytes(
+        b"# Title\r\n"
+        b"<!-- codegraph:stats-begin -->\r\n"
+        b"old stats\r\n"
+        b"<!-- codegraph:stats-end -->\r\n"
+        b"rest of file\r\n"
+    )
+    n = _update_stat_placeholders([md], "~10 files, 5 classes", quiet=True)
+    assert n == 1
+    content = md.read_text()
+    assert "~10 files, 5 classes" in content
+    assert "old stats" not in content
+    assert "<!-- codegraph:stats-begin -->" in content
+    assert "<!-- codegraph:stats-end -->" in content
+    assert "rest of file" in content
+
+
 def test_update_no_delimiters_skips(tmp_path: Path):
     md = tmp_path / "plain.md"
     md.write_text("# No placeholders here\nJust text.\n")
