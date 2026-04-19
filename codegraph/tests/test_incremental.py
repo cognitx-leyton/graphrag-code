@@ -117,10 +117,10 @@ def test_delete_subgraph_emits_correct_cypher():
     count = ldr.delete_file_subgraph(["a.py", "b.py"])
     assert count == 2
 
-    # Should have been called 10 times (methods, endpoints, gql_ops,
-    # columns, classes, functions, interfaces, atoms, edges, file nodes)
+    # Should have been called 3 times (class grandchildren, owned children,
+    # file node)
     calls = session_mock.run.call_args_list
-    assert len(calls) == 10
+    assert len(calls) == 3
 
     # Verify all calls received rows with both paths
     for call in calls:

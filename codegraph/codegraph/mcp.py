@@ -709,38 +709,28 @@ def reindex_file(path: str, package: Optional[str] = None) -> dict:
     if result is None:
         return {"error": f"Parser returned no result for {path}"}
 
-    # ── Delete old subgraph ─────────────────────────────────────
-    _DELETE_CASCADE = [
-        # 1. Methods
-        "MATCH (f:File {path: $path})-[:DEFINES_CLASS]->(c:Class)"
-        "-[:HAS_METHOD]->(m:Method) DETACH DELETE m",
-        # 2. Endpoints
-        "MATCH (f:File {path: $path})-[:DEFINES_CLASS]->(c:Class)"
-        "-[:EXPOSES]->(e:Endpoint) DETACH DELETE e",
-        # 3. GraphQL operations
-        "MATCH (f:File {path: $path})-[:DEFINES_CLASS]->(c:Class)"
-        "-[:RESOLVES]->(o:GraphQLOperation) DETACH DELETE o",
-        # 4. Columns
-        "MATCH (f:File {path: $path})-[:DEFINES_CLASS]->(c:Class)"
-        "-[:HAS_COLUMN]->(col:Column) DETACH DELETE col",
-        # 5. Classes
-        "MATCH (f:File {path: $path})-[:DEFINES_CLASS]->(c:Class) DETACH DELETE c",
-        # 6. Functions
-        "MATCH (f:File {path: $path})-[:DEFINES_FUNC]->(fn:Function) DETACH DELETE fn",
-        # 7. Interfaces
-        "MATCH (f:File {path: $path})-[:DEFINES_IFACE]->(i:Interface) DETACH DELETE i",
-        # 8. Atoms
-        "MATCH (f:File {path: $path})-[:DEFINES_ATOM]->(a:Atom) DETACH DELETE a",
-        # 9. Remaining edges
-        "MATCH (f:File {path: $path})-[rel]-() DELETE rel",
-        # 10. File node
-        "MATCH (f:File {path: $path}) DELETE f",
-    ]
-
+    # ── Delete old subgraph (3-step DETACH DELETE) ───────────────
     try:
         with _write_session() as s:
-            for cypher in _DELETE_CASCADE:
-                s.run(cypher, path=path)
+            # 1. Grandchildren of owned classes (Methods, Endpoints, etc.)
+            s.run(
+                "MATCH (f:File {path: $path})-[:DEFINES_CLASS]->(c:Class)-->(child) "
+                "WHERE NOT child:Class AND NOT child:Decorator "
+                "DETACH DELETE child",
+                path=path,
+            )
+            # 2. Direct owned children (Classes, Functions, Interfaces, Atoms)
+            s.run(
+                "MATCH (f:File {path: $path})"
+                "-[:DEFINES_CLASS|DEFINES_FUNC|DEFINES_IFACE|DEFINES_ATOM]->(child) "
+                "DETACH DELETE child",
+                path=path,
+            )
+            # 3. File node (DETACH DELETE auto-removes IMPORTS, BELONGS_TO, etc.)
+            s.run(
+                "MATCH (f:File {path: $path}) DETACH DELETE f",
+                path=path,
+            )
 
             # ── Load new nodes ──────────────────────────────────
             f = result.file
