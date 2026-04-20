@@ -2,14 +2,14 @@
 
 > **Purpose of this document.** Capture enough context for a fresh agent session (or a human returning after time away) to continue work on codegraph without re-deriving state from scratch. Separate from the user-facing roadmap bullets in `README.md`, which stay short and pitch-oriented.
 >
-> **Last updated:** 2026-04-20 after commits `865271e` → `ec94bff` (fix(resolver): resolve npm tsconfig presets from node_modules — closes #104; 551 tests passing, v0.1.64).
+> **Last updated:** 2026-04-20 after commits `865271e` → `e944b8c` (fix(loader): use _file_from_id to guard column filter against IndexError — closes #100; 552 tests passing, v0.1.65).
 
 ---
 
 ## TL;DR — where we are
 
-- **Branch:** `archon/task-fix-issue-104`. Adds `_resolve_npm_tsconfig(start_dir, package_name)` to `resolver.py` — walks up parent directories looking for `node_modules/<package>/tsconfig.json`. Modifies the `_read_ts_paths()` extends loop to branch on relative (`./`, `/`) vs. npm package names (e.g. `@tsconfig/node20`), resolving the latter via the new helper. Graceful `None` fallback when the preset isn't installed. Closes issue #104. v0.1.64.
-- **Tests:** 551 passing (1 excluded: MCP test requires `fastmcp` optional dep not installed in this env), 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
+- **Branch:** `archon/task-fix-issue-100`. Fixes `IndexError` in `loader.py` column filter — replaces the unsafe `c.entity_id.split("#")[0].split(":", 1)[1]` expression with a call to the existing `_file_from_id()` helper, which handles all prefix formats and returns `None` for malformed IDs (naturally excluded by `None in touched_files == False`). Also fixes a latent bug where `method:class:a.py#Cls#run` would have produced `"class:a.py"` instead of `"a.py"`. Closes issue #100. v0.1.65.
+- **Tests:** 552 passing (1 excluded: MCP test requires `fastmcp` optional dep not installed in this env), 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
 - **Graph indexed:** Twenty CRM is currently loaded into the local Neo4j container at `bolt://localhost:7688` (13,473 files, 2,559 classes, 6,088 methods, 5,562 CALLS, 6,708 hook usages, 4,593 RENDERS).
 - **MCP server:** 13 read-only tools + **2 write tools** (`wipe_graph`, `reindex_file`) gated by `--allow-write` flag + **29 prompt templates** (all Cypher blocks from `queries.md` auto-registered via `_register_query_prompts()`). `codegraph-mcp` console script registered. Smoke-tested via raw JSON-RPC.
 - **Package:** `cognitx-codegraph` v0.1.55 in `pyproject.toml`. Wheel + sdist build cleanly. **Not yet on PyPI** — needs one-time operational setup (Trusted Publisher registration). `release.yml` now waits for propagation and smoke-tests the published version.
@@ -24,10 +24,25 @@
 ## Shipped since the last roadmap update (commit `865271e`)
 
 ```
+e944b8c fix(loader): use _file_from_id to guard column filter against IndexError
+5f152cc Merge pull request #217 from cognitx-leyton/archon/task-fix-issue-104
+c9e7fe5 chore: bump version to 0.1.65
 ec94bff fix(resolver): resolve npm tsconfig presets from node_modules
 4a357a8 Merge pull request #216 from cognitx-leyton/archon/task-fix-issue-214
 0c61c05 chore: bump version to 0.1.64
 ```
+
+### Loader — column filter IndexError on malformed `entity_id` (issue #100)
+
+- `e944b8c fix(loader)` — Two files changed:
+
+  1. **`codegraph/codegraph/loader.py`** — The column filter in `load()` that restricts incremental writes to touched files used an unsafe expression `c.entity_id.split("#")[0].split(":", 1)[1]`. For IDs without a `:` prefix (e.g. `"malformed_no_colon"`) this raised `IndexError`. Replaced with a call to the existing `_file_from_id()` helper, which handles all prefix formats (`class:`, `method:`, nested `method:class:`) and returns `None` for malformed IDs. Since `None in touched_files` (a `set[str]`) evaluates to `False`, malformed columns are safely excluded without crashing. Also fixes a latent bug: the old `split(":", 1)[1]` on `"method:class:a.py#Cls#run"` would produce `"class:a.py"` instead of `"a.py"` — `_file_from_id()` handles the nested-prefix case correctly.
+
+  2. **`codegraph/tests/test_incremental.py`** — New `test_load_touched_files_filters_columns` test covers 3 cases: valid column in a touched file (included), valid column in an untouched file (excluded), malformed column without `:` separator (excluded without `IndexError`). Uses the existing `captured_runs` fixture and `FakeCtx` pattern.
+
+  - **Tests**: 552 passed (1 new), 0 failures. Code review: 0 issues. Arch-check: 4/4 policies pass (1 skipped).
+
+- `5f152cc` — PR #217 merged (`archon/task-fix-issue-104`). Version bumped to v0.1.65 (`c9e7fe5`).
 
 ### Resolver — npm tsconfig presets resolved from `node_modules` (issue #104)
 
