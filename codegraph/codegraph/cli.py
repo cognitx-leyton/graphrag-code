@@ -59,6 +59,12 @@ DEFAULT_URI = os.environ.get("CODEGRAPH_NEO4J_URI", "bolt://localhost:7688")
 DEFAULT_USER = os.environ.get("CODEGRAPH_NEO4J_USER", "neo4j")
 DEFAULT_PASS = os.environ.get("CODEGRAPH_NEO4J_PASS", "codegraph123")
 
+# Extensions recognised by the parsers; used to filter git diff output so that
+# documentation, config, and other non-code files don't appear in the
+# incremental index set.
+_CODE_EXTENSIONS: frozenset[str] = frozenset({".py", ".ts", ".tsx"})
+
+
 def _is_python_test_file(name_lower: str) -> bool:
     """Return True for conventional pytest file names (``test_*.py`` / ``*_test.py``)."""
     return name_lower.startswith(PY_TEST_PREFIX) or name_lower.endswith(PY_TEST_SUFFIX_TRAILING)
@@ -99,7 +105,8 @@ def _git_changed_files(repo: Path, since: str) -> tuple[set[str], set[str]]:
         else:
             # A, M, C, T, etc.
             modified.add(parts[1])
-    return modified, deleted
+    _keep = lambda paths: {p for p in paths if Path(p).suffix.lower() in _CODE_EXTENSIONS}
+    return _keep(modified), _keep(deleted)
 
 
 # ── top-level callback: enter REPL when no subcommand ───────────────

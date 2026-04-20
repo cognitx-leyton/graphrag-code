@@ -96,6 +96,26 @@ def test_git_diff_empty_diff_returns_empty_sets(monkeypatch):
     assert deleted == set()
 
 
+def test_git_diff_filters_non_code_extensions(monkeypatch):
+    """Non-code files (md, yml, json, txt) are excluded; .py/.ts/.tsx pass through."""
+    fake_output = (
+        "M\tsrc/foo.py\n"
+        "A\tsrc/bar.ts\n"
+        "M\tsrc/app.tsx\n"
+        "M\tREADME.md\n"
+        "A\t.github/ci.yml\n"
+        "D\tdocs/notes.txt\n"
+        "D\tsrc/old.ts\n"
+    )
+    monkeypatch.setattr(
+        subprocess, "run",
+        lambda *a, **kw: MagicMock(returncode=0, stdout=fake_output, stderr=""),
+    )
+    modified, deleted = _git_changed_files("/repo", "HEAD~1")
+    assert modified == {"src/foo.py", "src/bar.ts", "src/app.tsx"}
+    assert deleted == {"src/old.ts"}
+
+
 # ── Test group 2: delete_file_subgraph ────────────────────────────────
 
 
