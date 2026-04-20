@@ -2,14 +2,14 @@
 
 > **Purpose of this document.** Capture enough context for a fresh agent session (or a human returning after time away) to continue work on codegraph without re-deriving state from scratch. Separate from the user-facing roadmap bullets in `README.md`, which stay short and pitch-oriented.
 >
-> **Last updated:** 2026-04-20 after commits `865271e` → `e944b8c` (fix(loader): use _file_from_id to guard column filter against IndexError — closes #100; 552 tests passing, v0.1.65).
+> **Last updated:** 2026-04-20 after commits `865271e` → `21cb2c9` (fix(cli): filter non-code files from git diff in incremental mode — closes #98; 553 tests passing, v0.1.66).
 
 ---
 
 ## TL;DR — where we are
 
-- **Branch:** `archon/task-fix-issue-100`. Fixes `IndexError` in `loader.py` column filter — replaces the unsafe `c.entity_id.split("#")[0].split(":", 1)[1]` expression with a call to the existing `_file_from_id()` helper, which handles all prefix formats and returns `None` for malformed IDs (naturally excluded by `None in touched_files == False`). Also fixes a latent bug where `method:class:a.py#Cls#run` would have produced `"class:a.py"` instead of `"a.py"`. Closes issue #100. v0.1.65.
-- **Tests:** 552 passing (1 excluded: MCP test requires `fastmcp` optional dep not installed in this env), 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
+- **Branch:** `archon/task-fix-issue-98`. Fixes incremental mode picking up non-code files (`.md`, `.json`, `.yml`, etc.) from `git diff` output. Added `_CODE_EXTENSIONS = frozenset((".py", ".ts", ".tsx"))` in `cli.py` and filters both `modified` and `deleted` sets in `_git_changed_files()` before returning. Closes issue #98. v0.1.66.
+- **Tests:** 553 passing (1 excluded: MCP test requires `fastmcp` optional dep not installed in this env), 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
 - **Graph indexed:** Twenty CRM is currently loaded into the local Neo4j container at `bolt://localhost:7688` (13,473 files, 2,559 classes, 6,088 methods, 5,562 CALLS, 6,708 hook usages, 4,593 RENDERS).
 - **MCP server:** 13 read-only tools + **2 write tools** (`wipe_graph`, `reindex_file`) gated by `--allow-write` flag + **29 prompt templates** (all Cypher blocks from `queries.md` auto-registered via `_register_query_prompts()`). `codegraph-mcp` console script registered. Smoke-tested via raw JSON-RPC.
 - **Package:** `cognitx-codegraph` v0.1.55 in `pyproject.toml`. Wheel + sdist build cleanly. **Not yet on PyPI** — needs one-time operational setup (Trusted Publisher registration). `release.yml` now waits for propagation and smoke-tests the published version.
@@ -17,20 +17,34 @@
 - **CI:** `.github/workflows/arch-check.yml` — every PR to `main` spins up Neo4j, indexes, runs `codegraph arch-check`, fails on architecture violations. Verified live on PR #8 (42s, exit 0).
 - **Onboarding:** `codegraph init` scaffolds everything needed to dogfood codegraph in any repo. Live-tested against 3 fixtures including the real Twenty monorepo (13k files indexed end-to-end).
 - **Python Stage 2:** FastAPI / Flask / Django / SQLAlchemy framework detection + `:Endpoint` nodes. `/trace-endpoint` now works against Python repos.
-- **Incremental re-indexing:** `codegraph index --since <git-ref>` diffs git, cleans stale subgraphs, and upserts only touched files. Implies `--no-wipe`. REPL supports `index --since HEAD~1`.
+- **Incremental re-indexing:** `codegraph index --since <git-ref>` diffs git, cleans stale subgraphs, and upserts only touched files. Implies `--no-wipe`. REPL supports `index --since HEAD~1`. Non-code files (`.md`, `.json`, `.yml`, etc.) are now filtered from the diff before processing.
 
 ---
 
-## Shipped since the last roadmap update (commit `865271e`)
+## Shipped since the last roadmap update (commit `e944b8c`)
 
 ```
-e944b8c fix(loader): use _file_from_id to guard column filter against IndexError
-5f152cc Merge pull request #217 from cognitx-leyton/archon/task-fix-issue-104
-c9e7fe5 chore: bump version to 0.1.65
-ec94bff fix(resolver): resolve npm tsconfig presets from node_modules
-4a357a8 Merge pull request #216 from cognitx-leyton/archon/task-fix-issue-214
-0c61c05 chore: bump version to 0.1.64
+21cb2c9 fix(cli): filter non-code files from git diff in incremental mode
+232290b Merge pull request #218 from cognitx-leyton/archon/task-fix-issue-100
+bae64c2 chore: bump version to 0.1.66
+2e6db66 docs(roadmap): update session handoff
 ```
+
+### CLI — incremental mode filtered non-code files from git diff (issue #98)
+
+- `21cb2c9 fix(cli)` — Two files changed:
+
+  1. **`codegraph/codegraph/cli.py`** — Added `_CODE_EXTENSIONS = frozenset((".py", ".ts", ".tsx"))` module-level constant (mirrors `allowed_suffixes` in `_run_index`). In `_git_changed_files()`, both `modified` and `deleted` are now filtered via set-comprehension using `os.path.splitext` before being returned. This prevents files like `README.md`, `package.json`, or `.github/workflows/ci.yml` from being passed to the index/clean pipeline — where they'd either silently no-op or trigger unnecessary graph lookups.
+
+  2. **`codegraph/tests/test_incremental.py`** — New `test_git_diff_filters_non_code_extensions` test: 6-file fake diff (`.md`, `.json`, `.yml` mixed with `.py`, `.ts`, `.tsx`), asserts only the 3 code-file paths survive. Follows the existing `monkeypatch` pattern of `test_git_diff_parses_modified_and_deleted`.
+
+  - **Tests**: 553 passed (1 new), 0 failures. Code review: 0 issues. Arch-check: 4/4 policies pass (1 skipped).
+
+- `232290b` — PR #218 merged (`archon/task-fix-issue-100`). Version bumped to v0.1.66 (`bae64c2`).
+
+---
+
+## Previously shipped (through commit `e944b8c`)
 
 ### Loader — column filter IndexError on malformed `entity_id` (issue #100)
 
