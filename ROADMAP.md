@@ -2,14 +2,14 @@
 
 > **Purpose of this document.** Capture enough context for a fresh agent session (or a human returning after time away) to continue work on codegraph without re-deriving state from scratch. Separate from the user-facing roadmap bullets in `README.md`, which stay short and pitch-oriented.
 >
-> **Last updated:** 2026-04-20 after commits `d454e93` → `75af831` (fix(mcp): handle file-level EXPOSES edges via File path match in reindex_file — closes #194; 511 tests passing, v0.1.50).
+> **Last updated:** 2026-04-20 after commits `f6554b5` → `8841d2e` (fix(loader): split endpoint EXPOSES batch by class-level vs file-level — closes #195; 513 tests passing, v0.1.52).
 
 ---
 
 ## TL;DR — where we are
 
-- **Branch:** `archon/task-fix-issue-194`. Fixed file-level EXPOSES edge writes in `mcp.py`'s `reindex_file()`: endpoint nodes whose `controller_class` starts with `"file:"` now emit `MATCH (f:File {path: ...})` EXPOSES edges (instead of trying to match a non-existent Class node). Class-level endpoints continue to use `MATCH (c:Class {id: ...})`. `EXPOSES` removed from `_EDGE_WHITELIST` — both paths are now written inline. Added 1 new regression test (`test_reindex_file_file_level_exposes_edge`); updated `test_reindex_file_structural_edges_not_doubled` to assert EXPOSES is excluded from the generic loop. 511 tests passing, v0.1.50.
-- **Tests:** 511 passing (1 excluded: MCP test requires `fastmcp` optional dep not installed in this env), 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
+- **Branch:** `archon/task-fix-issue-195`. Fixed file-level EXPOSES edges being silently dropped during **full batch indexing** in `loader.py`. The single endpoint UNWIND was split into two complementary batches: class-level endpoints (where `controller_class` does not start with `"file:"`) use `MATCH (c:Class {id: r.cls})`, and file-level endpoints (where `controller_class` starts with `"file:"`) use `MATCH (f:File {path: r.fpath})` with the prefix stripped. Previously PR #196 merged the companion fix for `mcp.py`'s `reindex_file()` (issue #194, v0.1.52). This PR is the full-index counterpart. Added 2 new tests in `test_loader_partitioning.py` (`test_load_file_level_endpoint_exposes`, `test_load_class_level_endpoint_exposes`). 513 tests passing, v0.1.52.
+- **Tests:** 513 passing (1 excluded: MCP test requires `fastmcp` optional dep not installed in this env), 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
 - **Graph indexed:** Twenty CRM is currently loaded into the local Neo4j container at `bolt://localhost:7688` (13,473 files, 2,559 classes, 6,088 methods, 5,562 CALLS, 6,708 hook usages, 4,593 RENDERS).
 - **MCP server:** 13 read-only tools + **2 write tools** (`wipe_graph`, `reindex_file`) gated by `--allow-write` flag + **29 prompt templates** (all Cypher blocks from `queries.md` auto-registered via `_register_query_prompts()`). `codegraph-mcp` console script registered. Smoke-tested via raw JSON-RPC.
 - **Package:** `cognitx-codegraph` v0.1.32 in `pyproject.toml`. Wheel + sdist build cleanly. **Not yet on PyPI** — needs one-time operational setup (Trusted Publisher registration). `release.yml` now waits for propagation and smoke-tests the published version.
@@ -21,7 +21,23 @@
 
 ---
 
-## Shipped since the last roadmap update (commit `d454e93`)
+## Shipped since the last roadmap update (commit `f6554b5`)
+
+```
+8841d2e fix(loader): split endpoint EXPOSES batch by class-level vs file-level
+b735f5c Merge pull request #196 from cognitx-leyton/archon/task-fix-issue-194
+4ffa216 chore: bump version to 0.1.52
+6048f96 chore: bump version to 0.1.51
+f6554b5 docs(roadmap): update session handoff
+```
+
+### Loader — fix file-level EXPOSES edges silently dropped during full index (issue #195)
+
+- `8841d2e fix(loader)` — The single endpoint UNWIND in `loader.py` (`_write_endpoints`, lines 390–413) was split into two complementary `_run()` batches. **Class-level batch**: filters rows where `r.controller_class` does NOT start with `"file:"`, matches `(c:Class {id: r.cls})`, and MERGEs `[:EXPOSES]->(ep)`. **File-level batch**: filters rows where `r.controller_class` starts with `"file:"`, strips the prefix, matches `(f:File {path: r.fpath})`, and MERGEs `[:EXPOSES]->(ep)`. Root cause: the old single-path Cypher always used `MATCH (c:Class {id: r.cls})`, which silently produced 0 matches for file-scoped endpoints (no owning class node), so their EXPOSES edges were never written. **2 new tests** in `tests/test_loader_partitioning.py`: `test_load_file_level_endpoint_exposes` confirms file-level endpoints route through `File {path:}` match; `test_load_class_level_endpoint_exposes` is a regression guard confirming class-level endpoints still use `Class {id:}` match. Code review: 3 style issues found and fixed (duplicate import merged, `is False` → `not`, weak negative assertion simplified). Arch-check: 5/5 policies pass. Test count: 511 → 513. PR #196 (issue #194 `mcp.py` companion fix) merged as `b735f5c`. Version bumped to v0.1.52 (`4ffa216`).
+
+---
+
+## Previously shipped (through commit `75af831`)
 
 ```
 75af831 fix(mcp): handle file-level EXPOSES edges via File path match in reindex_file
