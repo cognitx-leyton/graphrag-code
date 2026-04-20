@@ -2,13 +2,13 @@
 
 > **Purpose of this document.** Capture enough context for a fresh agent session (or a human returning after time away) to continue work on codegraph without re-deriving state from scratch. Separate from the user-facing roadmap bullets in `README.md`, which stay short and pitch-oriented.
 >
-> **Last updated:** 2026-04-20 after commits `2c8ba38` → `9b9d102` (fix(init): return exit code 1 when first index fails during non-interactive init — closes #157; 514 tests passing, v0.1.53).
+> **Last updated:** 2026-04-20 after commits `9b9d102` → `b788e81` (fix(release): CDN propagation retry loop for PyPI installs — closes #154 + #81; 514 tests passing, v0.1.54).
 
 ---
 
 ## TL;DR — where we are
 
-- **Branch:** `archon/task-fix-issue-157`. Fixed `codegraph init --yes` (non-interactive mode) silently returning exit code `0` when the first index failed. `run_init()` in `init.py` now captures the return value of `_run_first_index()` and returns `1` when it returns `False` (a `CalledProcessError` during the index run). `_print_next_steps()` is still called before the early return so the user sees guidance. One new test added: `test_run_init_returns_1_when_first_index_fails` in `test_init.py`. 514 tests passing, v0.1.53.
+- **Branch:** `archon/task-fix-issue-154`. Enhanced `.github/workflows/release.yml` with two improvements to PyPI release reliability: (1) the "Verify PyPI install" step now retries up to 5 times with exponential backoff (30→60→120→240 s), fresh venv on each attempt, `--no-cache-dir` to force CDN re-fetch; (2) the "Wait for PyPI propagation" step now has a Phase 2 that extracts the wheel URL from the JSON metadata response and polls `files.pythonhosted.org` via HEAD for up to 120 s before the install retry loop starts. Closes issues #154 and #81. 514 tests passing, v0.1.54.
 - **Tests:** 514 passing (1 excluded: MCP test requires `fastmcp` optional dep not installed in this env), 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
 - **Graph indexed:** Twenty CRM is currently loaded into the local Neo4j container at `bolt://localhost:7688` (13,473 files, 2,559 classes, 6,088 methods, 5,562 CALLS, 6,708 hook usages, 4,593 RENDERS).
 - **MCP server:** 13 read-only tools + **2 write tools** (`wipe_graph`, `reindex_file`) gated by `--allow-write` flag + **29 prompt templates** (all Cypher blocks from `queries.md` auto-registered via `_register_query_prompts()`). `codegraph-mcp` console script registered. Smoke-tested via raw JSON-RPC.
@@ -21,7 +21,36 @@
 
 ---
 
-## Shipped since the last roadmap update (commit `2c8ba38`)
+## Shipped since the last roadmap update (commit `9b9d102`)
+
+```
+b788e81 fix(release): add CDN propagation retry loop for PyPI installs
+cb10f67 Merge pull request #202 from cognitx-leyton/archon/task-fix-issue-157
+5ec5087 chore: bump version to 0.1.54
+42134e8 chore: add Dependabot version updates
+c26365c fix(workflow): stronger group-issues prompt — never return empty, show reasoning
+aac2c07 Merge pull request #201 from cognitx-leyton/dev
+```
+
+### Release — CDN propagation wait + install retry backoff (issues #154 + #81)
+
+- `b788e81 fix(release)` — Two improvements to `.github/workflows/release.yml`:
+  - **Issue #81 — CDN polling (Phase 2 propagation wait):** After the existing JSON-API poll (Phase 1, up to 300 s), a new Phase 2 extracts the `.whl` URL from the PyPI metadata response using `python3` inline and polls `files.pythonhosted.org` with HEAD requests for up to 120 s. Falls back gracefully (emits `::warning::`, continues) if no wheel exists (sdist-only publish) or if CDN times out — the retry loop handles remaining lag.
+  - **Issue #154 — Install retry loop:** Replaced the single-attempt "Verify PyPI install" step with a 5-attempt loop using exponential backoff (30 → 60 → 120 → 240 s). Each attempt tears down and recreates `/tmp/verify-venv`, installs with `--no-cache-dir` to force CDN re-fetch, and runs `codegraph --help` as a smoke test. On final failure, emits `::error::` and exits `1`.
+  - Code review identified and fixed 2 issues: `next()` with no default (raised `StopIteration` if no wheel existed) → replaced with `next(..., None)` + conditional print; missing POSIX trailing newline.
+  - No Python source files changed. No test changes needed. Arch-check: N/A. Version bumped to v0.1.54 (`5ec5087`). PR #202 (issue #157 — init exit-code fix) merged as `cb10f67`.
+
+### Workflow — group-issues prompt hardening
+
+- `c26365c fix(workflow)` — Strengthened the `group-issues` Claude Code workflow prompt to never return an empty result and to show its grouping reasoning. Prevents silent no-ops on workflows that call the grouper when no issues match.
+
+### Dependabot
+
+- `42134e8 chore` — Added Dependabot version-update config (`.github/dependabot.yml`) to auto-PR GitHub Actions version bumps.
+
+---
+
+## Previously shipped (through commit `9b9d102`)
 
 ```
 9b9d102 fix(init): return exit code 1 when first index fails during non-interactive init
@@ -577,11 +606,11 @@ Beyond unit/integration tests, these were dogfooded against real systems:
 
 | Thing | Value |
 |---|---|
-| Current branch | `archon/task-fix-issue-157` |
+| Current branch | `archon/task-fix-issue-154` |
 | Base branch | `main` |
-| Unpushed commits | 1 (`9b9d102` — fix(init): return exit code 1 when first index fails during non-interactive init, pending PR) |
-| Open PR | None. PR #197 (issue #195 — loader EXPOSES batch split) merged to main. |
-| Working tree | Clean |
+| Unpushed commits | 1 (`b788e81` — fix(release): CDN propagation retry loop for PyPI installs, pending PR) |
+| Open PR | None. PR #202 (issue #157 — init exit-code fix) merged to main. |
+| Working tree | Clean (untracked: `.claude/plans/pypi-install-retry.plan.md`) |
 | Test count | 514 passing + 1 deselected |
 | Test runtime | ~16 s |
 | Byte-compile | Clean |
