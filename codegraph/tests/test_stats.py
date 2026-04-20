@@ -115,6 +115,11 @@ def test_query_graph_stats_no_scope():
     assert result["decorators"] == 2
     assert result["edges"]["IMPORTS"] == 100
     assert result["edges"]["CALLS"] == 50
+    # Verify UNWIND-based Cypher and known_labels parameter
+    session = driver._session
+    node_cypher, node_params = session.calls[0]
+    assert "UNWIND" in node_cypher
+    assert "known_labels" in node_params
 
 
 def test_query_graph_stats_with_scope():
@@ -132,6 +137,9 @@ def test_query_graph_stats_with_scope():
     assert "scopes" in node_params
     assert node_params["scopes"] == ["codegraph/codegraph"]
     assert "STARTS WITH" in node_cypher
+    # Verify UNWIND-based Cypher and known_labels parameter
+    assert "UNWIND" in node_cypher
+    assert "known_labels" in node_params
     # Default scoped edge query uses AND — both endpoints must be in scope
     edge_cypher, _ = session.calls[1]
     assert "AND (bloc" in edge_cypher
@@ -150,6 +158,32 @@ def test_query_graph_stats_with_scope_cross_edges():
     session = driver._session
     edge_cypher, _ = session.calls[1]
     assert " OR " in edge_cypher
+
+
+def test_query_graph_stats_multi_label_nodes():
+    """Multi-label nodes: known labels counted, unknown labels excluded."""
+    multi_label_nodes = [
+        {"label": "File", "count": 10},
+        {"label": "TestFile", "count": 5},   # unknown label — should be excluded
+        {"label": "Class", "count": 8},
+        {"label": "Component", "count": 3},  # unknown label — should be excluded
+        {"label": "Function", "count": 20},
+    ]
+    driver = _constant_driver({
+        "labels(n)": multi_label_nodes,
+        "type(r)": [{"rel": "CALLS", "count": 7}],
+    })
+    result = _query_graph_stats(driver, scope=None)
+    # Known labels are counted
+    assert result["files"] == 10
+    assert result["classes"] == 8
+    assert result["functions"] == 20
+    # Unknown labels do NOT appear in the output
+    assert "TestFile" not in result
+    assert "Component" not in result
+    # Labels not in the response default to 0
+    assert result["methods"] == 0
+    assert result["edges"]["CALLS"] == 7
 
 
 @pytest.mark.parametrize("scope", [None, []])
