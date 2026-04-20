@@ -20,6 +20,7 @@ from codegraph.loader import Neo4jLoader, _file_from_id
 from codegraph.resolver import Index
 from codegraph.schema import (
     ClassNode,
+    ColumnNode,
     Edge,
     FileNode,
     FunctionNode,
@@ -335,3 +336,44 @@ def test_file_from_id_extracts_path(node_id, expected):
 ])
 def test_file_from_id_unknown_prefix_returns_none(node_id):
     assert _file_from_id(node_id) is None
+
+
+# ── Test group 5: column filter with malformed entity_id ─────────────
+
+
+def test_load_touched_files_filters_columns(captured_runs):
+    """Column filter handles valid, untouched, and malformed entity_ids without crashing."""
+    idx = Index()
+    fn = FileNode(path="a.py", package="p", language="py", loc=10)
+    pr = ParseResult(file=fn)
+    # Valid column in a touched file
+    pr.columns.append(ColumnNode(entity_id="class:a.py#Foo", name="id", type="int"))
+    # Valid column in an untouched file
+    pr.columns.append(ColumnNode(entity_id="class:b.py#Bar", name="id", type="int"))
+    # Malformed entity_id (no colon prefix) — should be excluded, not crash
+    pr.columns.append(ColumnNode(entity_id="malformed_no_colon", name="bad", type="str"))
+    idx.add(pr)
+
+    ldr = Neo4jLoader.__new__(Neo4jLoader)
+    ldr.database = "neo4j"
+
+    class FakeCtx:
+        def __enter__(self):
+            return MagicMock()
+        def __exit__(self, *a):
+            pass
+
+    ldr.driver = MagicMock()
+    ldr.driver.session.return_value = FakeCtx()
+
+    # Should not raise IndexError
+    ldr.load(idx, [], touched_files={"a.py"})
+
+    # Find the Column MERGE call — only a.py's column should appear
+    col_merges = [
+        (cy, rows) for cy, rows in captured_runs
+        if "MERGE (c:Column {id: r.id})" in cy
+    ]
+    assert len(col_merges) == 1
+    col_ids = {r["entity_id"] for r in col_merges[0][1]}
+    assert col_ids == {"class:a.py#Foo"}

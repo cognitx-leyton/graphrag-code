@@ -227,7 +227,7 @@ class Neo4jLoader:
             methods = [m for m in methods if m.file in touched_files]
             ifaces = [i for i in ifaces if i.file in touched_files]
             endpoints = [e for e in endpoints if e.file in touched_files]
-            columns = [c for c in columns if c.entity_id.split("#")[0].split(":", 1)[1] in touched_files]
+            columns = [c for c in columns if _file_from_id(c.entity_id) in touched_files]
             gql_ops = [o for o in gql_ops if o.file in touched_files]
             atoms = [a for a in atoms if a.file in touched_files]
 
