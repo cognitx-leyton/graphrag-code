@@ -2,14 +2,14 @@
 
 > **Purpose of this document.** Capture enough context for a fresh agent session (or a human returning after time away) to continue work on codegraph without re-deriving state from scratch. Separate from the user-facing roadmap bullets in `README.md`, which stay short and pitch-oriented.
 >
-> **Last updated:** 2026-04-20 after commits `7554891` → `02a007d` (fix(cli): catch Neo4j connection and auth errors in wipe and index commands — closes #208; 532 tests passing, v0.1.58).
+> **Last updated:** 2026-04-20 after commits `31ee067` → `7190e84` (fix(stats): prevent multi-label nodes from inflating node counts — closes #139; 533 tests passing, v0.1.59).
 
 ---
 
 ## TL;DR — where we are
 
-- **Branch:** `archon/task-fix-issue-208`. All 6 Neo4j-touching CLI commands now catch `ServiceUnavailable | AuthError` and emit structured `connection` errors — completing the work started in #147. `wipe` and `index` were the final two commands to gain this coverage. `validate` also gained a `try/finally` to prevent driver leaks. Closes issue #208. v0.1.58.
-- **Tests:** 532 passing (1 excluded: MCP test requires `fastmcp` optional dep not installed in this env), 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
+- **Branch:** `archon/task-fix-issue-139`. Stats Cypher rewritten to use `UNWIND labels(n) AS label WHERE label IN $known_labels` instead of `labels(n)[0]`, preventing multi-label nodes (e.g. a node carrying both `:Function` and `:Method`) from being counted once per label and inflating totals. Same fix applied to `describe_schema` in the MCP server. Closes issue #139. v0.1.59.
+- **Tests:** 533 passing (1 excluded: MCP test requires `fastmcp` optional dep not installed in this env), 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
 - **Graph indexed:** Twenty CRM is currently loaded into the local Neo4j container at `bolt://localhost:7688` (13,473 files, 2,559 classes, 6,088 methods, 5,562 CALLS, 6,708 hook usages, 4,593 RENDERS).
 - **MCP server:** 13 read-only tools + **2 write tools** (`wipe_graph`, `reindex_file`) gated by `--allow-write` flag + **29 prompt templates** (all Cypher blocks from `queries.md` auto-registered via `_register_query_prompts()`). `codegraph-mcp` console script registered. Smoke-tested via raw JSON-RPC.
 - **Package:** `cognitx-codegraph` v0.1.55 in `pyproject.toml`. Wheel + sdist build cleanly. **Not yet on PyPI** — needs one-time operational setup (Trusted Publisher registration). `release.yml` now waits for propagation and smoke-tests the published version.
@@ -21,7 +21,22 @@
 
 ---
 
-## Shipped since the last roadmap update (commit `7554891`)
+## Shipped since the last roadmap update (commit `31ee067`)
+
+```
+7190e84 fix(stats): prevent multi-label nodes from inflating node counts
+db2d9f8 Merge pull request #210 from cognitx-leyton/archon/task-fix-issue-208
+cad4684 chore: bump version to 0.1.59
+```
+
+### Stats — fix multi-label node miscount in `stats` and `describe_schema` (issue #139)
+
+- `7190e84 fix(stats)` — The `_query_graph_stats` Cypher in `cli.py` used `labels(n)[0]` to pick one label per node. Nodes carrying multiple labels (e.g. `:Function:Method`) were counted once per label that happened to land in index 0, silently inflating totals. Fix replaces `labels(n)[0]` with `UNWIND labels(n) AS label WHERE label IN $known_labels` in both the scoped and unscoped branches. A `known_labels` parameter (from `_LABEL_MAP.values()`) is threaded into both `params` dicts. The same pattern was applied to `describe_schema` in `mcp.py` (no `$known_labels` filter there — generic tool, no filtering needed). `labels(n)[0]` at `mcp.py:614` (`get_function_details`) is a single-node kind identifier, not a count aggregation — left untouched.
+  - **Tests** (`tests/test_stats.py`): 1 new test — `test_query_graph_stats_multi_label_nodes` verifies that nodes with unknown labels (`TestFile`, `Component`) don't leak into the output dict, and that known-label counts are correct. `UNWIND`/`known_labels` structural assertions added to `test_query_graph_stats_no_scope` and `test_query_graph_stats_with_scope`. Test count: 532 → 533. Version bumped to v0.1.59 (`cad4684`). PR #210 merged as `db2d9f8`. Arch-check: 5/5 policies pass. Code review: 0 issues.
+
+---
+
+## Previously shipped (through commit `02a007d`)
 
 ```
 02a007d fix(cli): catch Neo4j connection and auth errors in wipe and index commands
@@ -666,12 +681,12 @@ Beyond unit/integration tests, these were dogfooded against real systems:
 
 | Thing | Value |
 |---|---|
-| Current branch | `archon/task-fix-issue-208` |
+| Current branch | `archon/task-fix-issue-139` |
 | Base branch | `main` |
-| Unpushed commits | 1 (`02a007d` — fix(cli): catch Neo4j connection and auth errors in wipe and index commands, pending PR) |
-| Open PR | None. PR #209 (issue #147 — validate driver leak fix) merged to main. |
-| Working tree | Clean (untracked: `.claude/plans/fix-neo4j-error-handling-wipe-index.plan.md`) |
-| Test count | 532 passing + 1 deselected |
+| Unpushed commits | 1 (`7190e84` — fix(stats): prevent multi-label nodes from inflating node counts, pending PR) |
+| Open PR | None. PR #210 (issue #139 — stats multi-label miscount fix) merged to main. |
+| Working tree | Clean (untracked: `.claude/plans/fix-stats-multi-label-miscount.plan.md`) |
+| Test count | 533 passing + 1 deselected |
 | Test runtime | ~16 s |
 | Byte-compile | Clean |
 | Last editable install | After `357ad03`. Re-run `cd codegraph && .venv/bin/pip install -e .` after any `pyproject.toml` edit. |

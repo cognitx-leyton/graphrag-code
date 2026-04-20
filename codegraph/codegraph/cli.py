@@ -493,7 +493,9 @@ def _query_graph_stats(
                 "WITH n, coalesce(n.file, n.path) AS loc "
                 "WHERE loc IS NOT NULL "
                 "AND any(s IN $scopes WHERE loc STARTS WITH s) "
-                "RETURN labels(n)[0] AS label, count(*) AS count"
+                "UNWIND labels(n) AS label "
+                "WITH label WHERE label IN $known_labels "
+                "RETURN label, count(*) AS count"
             )
             conjunction = "OR" if cross_scope_edges else "AND"
             edge_cypher = (
@@ -505,18 +507,20 @@ def _query_graph_stats(
                 f"{conjunction} (bloc IS NOT NULL AND any(s IN $scopes WHERE bloc STARTS WITH s)) "
                 "RETURN type(r) AS rel, count(*) AS count"
             )
-            params = {"scopes": scope}
+            params = {"scopes": scope, "known_labels": list(_LABEL_MAP.values())}
         else:
             node_cypher = (
                 "MATCH (n) "
                 "WHERE n.file IS NOT NULL OR n.path IS NOT NULL "
-                "RETURN labels(n)[0] AS label, count(*) AS count"
+                "UNWIND labels(n) AS label "
+                "WITH label WHERE label IN $known_labels "
+                "RETURN label, count(*) AS count"
             )
             edge_cypher = (
                 "MATCH ()-[r]->() "
                 "RETURN type(r) AS rel, count(*) AS count"
             )
-            params = {}
+            params = {"known_labels": list(_LABEL_MAP.values())}
 
         node_rows = list(s.run(node_cypher, **params))
         edge_rows = list(s.run(edge_cypher, **params))

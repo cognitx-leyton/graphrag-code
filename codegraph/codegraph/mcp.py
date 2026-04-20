@@ -285,7 +285,7 @@ def describe_schema() -> dict:
                 )
             ]
             count_rows = list(s.run(
-                "MATCH (n) RETURN labels(n)[0] AS label, count(*) AS n"
+                "MATCH (n) UNWIND labels(n) AS label RETURN label, count(*) AS n"
             ))
     except CypherSyntaxError as e:
         return {"error": f"Cypher syntax error: {_err_msg(e)}"}
