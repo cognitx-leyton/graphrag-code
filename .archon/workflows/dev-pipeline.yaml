@@ -231,47 +231,70 @@ nodes:
 
   - id: group-issues
     depends_on: [plan]
-    model: sonnet
+    model: opus
     context: fresh
     idle_timeout: 600000
     prompt: |
-      Check if there are other open GitHub issues that are similar to the one being
-      implemented and could be addressed in the same PR.
+      You MUST check all open GitHub issues to find ones that should be grouped
+      with the current issue and addressed in the same PR. Do NOT skip this step.
+      Do NOT return empty output — you must always output the result format below.
 
       Current issue from user request: $USER_MESSAGE
-      Plan: $plan.output
+      Plan (files being changed): $plan.output
 
-      ## Instructions
+      ## Step 1: Get all open issues
 
-      1. List all open issues:
-         ```bash
-         gh issue list --state open --json number,title,body --jq '.[] | "#\(.number) \(.title)\n\(.body[:200])\n---"'
-         ```
-
-      2. Compare each open issue against:
-         - The files being changed in the plan
-         - The scope of the current issue (same module? same function? same bug class?)
-         - Keywords overlap (e.g., both mention "arch-check", "mcp", "resolver")
-
-      3. An issue is "similar" if:
-         - It affects the SAME files as the current plan
-         - OR it's about the SAME function/class/module
-         - OR fixing the current issue would naturally fix it too
-         - Do NOT group issues that are merely in the same category but touch different code
-
-      4. Output a JSON-like summary:
-         - primary_issue: the original issue number
-         - grouped_issues: list of issue numbers that should be addressed together
-         - For each grouped issue: a one-line reason why it's related
-
-      If no similar issues found, just output the primary issue number alone.
-
-      Example output:
+      ```bash
+      gh issue list --state open --json number,title,body --jq '.[] | "#\(.number) \(.title): \(.body[:300])"'
       ```
-      Primary: #30
-      Grouped: #65 (same function: query_graph limit handling), #71 (same function: query_graph row cleaning)
-      All issue numbers: 30, 65, 71
+
+      ## Step 2: Read the plan to identify which files are being changed
+
+      Extract the list of files from the plan output above.
+
+      ## Step 3: For EACH open issue, explicitly check these criteria
+
+      Go through every open issue one by one and check:
+
+      **A. Exact duplicate?** Does it describe the SAME change as another open issue?
+         Example: "#151 move _LABEL_MAP to module level" and "#142 hoist _LABEL_MAP out of _query_graph_stats"
+         → These are the SAME fix. Group them.
+
+      **B. Same file + same area?** Does it touch a file being changed in the plan
+         AND the same function/class/section of that file?
+         Example: Two issues both about error handling in `arch_check.py` → Group them.
+
+      **C. Would fixing one naturally fix the other?** If implementing issue A
+         requires changing code that also resolves issue B, group them.
+         Example: "add scope filter to custom policies" and "apply --scope to user-authored policies"
+         → Same feature, group them.
+
+      **D. Same docs section?** Multiple issues about the same documentation file?
+         Example: "#86 stale extending section" and "#83 references non-existent variable"
+         → Both about arch-policies.md docs, group them.
+
+      Do NOT group issues that are just in the same category (e.g., "both are bugs")
+      but touch completely different code.
+
+      ## Step 4: Output (MANDATORY — never return empty)
+
+      You MUST output in this exact format:
+
       ```
+      Primary: #<N>
+      Grouped: #<M> (reason), #<K> (reason)
+      All issue numbers: N, M, K
+      ```
+
+      If no similar issues found:
+      ```
+      Primary: #<N>
+      Grouped: none
+      All issue numbers: N
+      ```
+
+      Show your reasoning for EACH issue you considered — say why you grouped
+      or did not group it. Be thorough.
 
   # ═══════════════════════════════════════════════════════════════
   # Step 4: Implement
