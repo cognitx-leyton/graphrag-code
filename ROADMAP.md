@@ -2,14 +2,14 @@
 
 > **Purpose of this document.** Capture enough context for a fresh agent session (or a human returning after time away) to continue work on codegraph without re-deriving state from scratch. Separate from the user-facing roadmap bullets in `README.md`, which stay short and pitch-oriented.
 >
-> **Last updated:** 2026-04-20 after commits `0e7c09e` → `11bea30` (test(template-sync): add drift detection test for .claude/commands templates — closes #136; 538 tests passing, v0.1.60).
+> **Last updated:** 2026-04-20 after commits `11bea30` → `475eb4f` (fix(arch-check): respect custom sample_limit in user-defined policies — closes #116, #91, #108; 542 tests passing, v0.1.61).
 
 ---
 
 ## TL;DR — where we are
 
-- **Branch:** `archon/task-fix-issue-136`. Template sync drift detected and fixed: removed a stray line after the `<!-- codegraph:stats-end -->` marker in `.claude/commands/graph.md`. New parametrized test suite (`tests/test_template_sync.py`) checks 5 literal command templates against their bundled `codegraph/templates/commands/` sources, with stats-section normalization so per-repo stats never cause false failures. Closes issue #136. v0.1.60.
-- **Tests:** 538 passing (1 excluded: MCP test requires `fastmcp` optional dep not installed in this env), 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
+- **Branch:** `archon/task-fix-issue-116`. Custom arch-check policies now respect `sample_limit` and support `$scope` parameter injection. `_check_custom()` passes `limit=sample_limit` and `scope=scope` to every `s.run()` call so `LIMIT $limit` / `$scope` in user Cypher honour the global settings. Parse-time `UserWarning` emitted when a custom `sample_cypher` contains a hardcoded `LIMIT <n>`. All built-in docs + test fixtures updated to `LIMIT $limit`. Closes issues #116 (sample_limit), #91 and #108 (scope injection). v0.1.61.
+- **Tests:** 542 passing (1 excluded: MCP test requires `fastmcp` optional dep not installed in this env), 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
 - **Graph indexed:** Twenty CRM is currently loaded into the local Neo4j container at `bolt://localhost:7688` (13,473 files, 2,559 classes, 6,088 methods, 5,562 CALLS, 6,708 hook usages, 4,593 RENDERS).
 - **MCP server:** 13 read-only tools + **2 write tools** (`wipe_graph`, `reindex_file`) gated by `--allow-write` flag + **29 prompt templates** (all Cypher blocks from `queries.md` auto-registered via `_register_query_prompts()`). `codegraph-mcp` console script registered. Smoke-tested via raw JSON-RPC.
 - **Package:** `cognitx-codegraph` v0.1.55 in `pyproject.toml`. Wheel + sdist build cleanly. **Not yet on PyPI** — needs one-time operational setup (Trusted Publisher registration). `release.yml` now waits for propagation and smoke-tests the published version.
@@ -21,7 +21,32 @@
 
 ---
 
-## Shipped since the last roadmap update (commit `0e7c09e`)
+## Shipped since the last roadmap update (commit `11bea30`)
+
+```
+475eb4f fix(arch-check): respect custom sample_limit in user-defined policies
+6058fac Merge pull request #212 from cognitx-leyton/archon/task-fix-issue-136
+0273558 chore: bump version to 0.1.61
+```
+
+### arch-check — custom policies honour `sample_limit` and support `$scope` (issues #116, #91, #108)
+
+- `475eb4f fix(arch-check)` — Three grouped fixes to how custom `[[policies.custom]]` entries are evaluated:
+
+  1. **Issue #116 — `sample_limit` threading:** `_check_custom()` in `arch_check.py` now accepts `sample_limit: int` (forwarded from `_run_all`) and passes `limit=sample_limit` to every `session.run()` call. Custom policies using `LIMIT $limit` in `sample_cypher` now respect the value from `[settings] sample_limit = N` in the policy file. Previously `$limit` was always unbound, causing a Neo4j parameter error.
+
+  2. **Issues #91/#108 — `$scope` injection:** `_check_custom()` now also accepts `scope: list[str]` and passes `scope=scope` to both the count and sample `s.run()` calls. Users can reference `$scope` in their Cypher (e.g. `WHERE ANY(p IN $scope WHERE f.path STARTS WITH p)`) to honour the same `--scope` filtering as built-in policies. Passing `scope=[]` (no scope set) is safe — any `$scope` reference that isn't used silently receives an unused param.
+
+  3. **Parse-time warning for hardcoded LIMIT:** `_parse_custom()` in `arch_config.py` now emits a `UserWarning` when a custom `sample_cypher` string matches `LIMIT\s+\d+` (a literal integer limit rather than `$limit`). Message: `"Custom policy '…': sample_cypher contains a hardcoded LIMIT — use LIMIT $limit to respect settings.sample_limit"`. Non-breaking; existing policies continue to work.
+
+  - **Docs** (`docs/arch-policies.md`): All 3 custom policy Cypher examples updated `LIMIT 10` → `LIMIT $limit`. Rules section now documents the `$limit` and `$scope` parameters available in custom Cypher.
+  - **Tests** (`tests/test_arch_check.py`): 2 new tests — `test_check_custom_passes_limit_param` (asserts `limit=5` forwarded to `session.run()`); `test_check_custom_passes_scope_param` (asserts `scope=["pkg/"]` forwarded). Existing fixture updated `LIMIT 10` → `LIMIT $limit`.
+  - **Tests** (`tests/test_arch_config.py`): 2 new tests — `test_custom_hardcoded_limit_emits_warning` (asserts `UserWarning` on `LIMIT 10`); `test_custom_parameterised_limit_no_warning` (asserts no warning on `LIMIT $limit`). Existing fixtures updated. `import warnings` moved to module level.
+  - Code review: 1 style issue found and fixed (`import warnings` inside function body → module level). 542 tests pass, byte-compile clean. Version bumped to v0.1.61 (`0273558`). PR #212 merged as `6058fac`. Arch-check: 5/5 policies pass.
+
+---
+
+## Previously shipped (through commit `11bea30`)
 
 ```
 11bea30 test(template-sync): add drift detection test for .claude/commands templates
@@ -697,12 +722,12 @@ Beyond unit/integration tests, these were dogfooded against real systems:
 
 | Thing | Value |
 |---|---|
-| Current branch | `archon/task-fix-issue-139` |
+| Current branch | `archon/task-fix-issue-116` |
 | Base branch | `main` |
-| Unpushed commits | 1 (`7190e84` — fix(stats): prevent multi-label nodes from inflating node counts, pending PR) |
-| Open PR | None. PR #210 (issue #139 — stats multi-label miscount fix) merged to main. |
-| Working tree | Clean (untracked: `.claude/plans/fix-stats-multi-label-miscount.plan.md`) |
-| Test count | 533 passing + 1 deselected |
+| Unpushed commits | 1 (`475eb4f` — fix(arch-check): respect custom sample_limit in user-defined policies, pending PR) |
+| Open PR | None. PR #212 (issues #116, #91, #108 — custom policy sample_limit + scope) merged to main. |
+| Working tree | Clean (untracked: `.claude/plans/fix-custom-policy-sample-limit.plan.md`) |
+| Test count | 542 passing + 1 deselected |
 | Test runtime | ~16 s |
 | Byte-compile | Clean |
 | Last editable install | After `357ad03`. Re-run `cd codegraph && .venv/bin/pip install -e .` after any `pyproject.toml` edit. |
