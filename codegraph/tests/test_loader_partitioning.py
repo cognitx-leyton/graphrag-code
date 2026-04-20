@@ -12,8 +12,7 @@ import pytest
 
 from codegraph import loader
 from codegraph.py_parser import PyParser
-from codegraph.schema import DECORATED_BY, Edge
-
+from codegraph.schema import DECORATED_BY, Edge, EndpointNode, FileNode, ParseResult
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CODEGRAPH_PKG = REPO_ROOT / "codegraph" / "codegraph"
@@ -98,3 +97,124 @@ def test_unknown_prefix_logs_debug(captured_runs, caplog):
         "unknown src prefix" in rec.message and "garbage:x#y" in rec.message
         for rec in caplog.records
     ), "expected a debug log about the unknown prefix"
+
+
+# ── Endpoint EXPOSES tests ───────────────────────────────────────
+
+
+class _FakeRecord:
+    """Minimal stand-in for a Neo4j record."""
+
+    def __getitem__(self, key):
+        return 0
+
+
+class _FakeResult:
+    """Minimal stand-in for a Neo4j result."""
+
+    def single(self):
+        return _FakeRecord()
+
+
+class _FakeSession:
+    """Minimal stand-in for a Neo4j session (context-manager protocol)."""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        pass
+
+    def run(self, *a, **kw):
+        return _FakeResult()
+
+
+class _FakeDriver:
+    """Minimal stand-in for a Neo4j driver."""
+
+    def __init__(self):
+        self._session = _FakeSession()
+
+    def session(self, **kw):
+        return self._session
+
+
+def _make_loader(monkeypatch):
+    """Build a Neo4jLoader without connecting to real Neo4j."""
+    monkeypatch.setattr(
+        loader.GraphDatabase, "driver", lambda *a, **kw: _FakeDriver()
+    )
+    return loader.Neo4jLoader("bolt://fake", "u", "p")
+
+
+def _make_index(endpoints, file_path="/tmp/app.py"):
+    """Build a minimal Index containing *endpoints* under *file_path*."""
+    from codegraph.resolver import Index
+
+    idx = Index()
+    result = ParseResult(
+        file=FileNode(path=file_path, package="pkg", language="py", loc=1),
+        endpoints=list(endpoints),
+    )
+    idx.add(result)
+    return idx
+
+
+def test_load_file_level_endpoint_exposes(monkeypatch, captured_runs):
+    """File-level endpoints must MERGE EXPOSES via File {path:}, not Class {id:}."""
+    ldr = _make_loader(monkeypatch)
+    ep = EndpointNode(
+        method="GET", path="/",
+        controller_class="file:/tmp/app.py",
+        file="/tmp/app.py", handler="index",
+    )
+    idx = _make_index([ep])
+
+    ldr.load(idx, edges=[])
+
+    file_runs = [
+        (cypher, rows) for cypher, rows in captured_runs
+        if "File {path: r.fpath}" in cypher and "EXPOSES" in cypher
+    ]
+    assert len(file_runs) == 1, "expected one file-level EXPOSES batch"
+    rows = file_runs[0][1]
+    assert len(rows) == 1
+    assert rows[0]["fpath"] == "/tmp/app.py"
+
+    # Must NOT appear in the class-level batch
+    class_runs = [
+        rows for cypher, rows in captured_runs
+        if "Class {id: r.cls}" in cypher and "EXPOSES" in cypher
+    ]
+    for rows in class_runs:
+        assert len(rows) == 0
+
+
+def test_load_class_level_endpoint_exposes(monkeypatch, captured_runs):
+    """Class-level endpoints must still MERGE EXPOSES via Class {id:}."""
+    ldr = _make_loader(monkeypatch)
+    ep = EndpointNode(
+        method="POST", path="/items",
+        controller_class="class:/tmp/app.py#ItemController",
+        file="/tmp/app.py", handler="create",
+    )
+    idx = _make_index([ep])
+
+    ldr.load(idx, edges=[])
+
+    class_runs = [
+        (cypher, rows) for cypher, rows in captured_runs
+        if "Class {id: r.cls}" in cypher and "EXPOSES" in cypher
+    ]
+    assert len(class_runs) == 1, "expected one class-level EXPOSES batch"
+    rows = class_runs[0][1]
+    assert len(rows) == 1
+    assert rows[0]["cls"] == "class:/tmp/app.py#ItemController"
+
+    # Must NOT appear in the file-level batch
+    file_runs = [
+        (cypher, rows) for cypher, rows in captured_runs
+        if "File {path: r.fpath}" in cypher and "EXPOSES" in cypher
+    ]
+    for _, rows in file_runs:
+        assert len(rows) == 0

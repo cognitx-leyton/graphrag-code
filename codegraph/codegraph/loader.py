@@ -388,6 +388,7 @@ class Neo4jLoader:
             """, [dict(id=i.id, name=i.name, file=i.file) for i in ifaces])
 
             # ── Endpoints ─────────────────────────────────────────
+            # Split: class-level vs file-level endpoints (see #195)
             _run(s, """
                 UNWIND $rows AS r
                 MERGE (e:Endpoint {id: r.id})
@@ -400,6 +401,21 @@ class Neo4jLoader:
                 dict(id=e.id, method=e.method, path=e.path, handler=e.handler,
                      file=e.file, cls=e.controller_class)
                 for e in endpoints
+                if not e.controller_class.startswith("file:")
+            ])
+            _run(s, """
+                UNWIND $rows AS r
+                MERGE (e:Endpoint {id: r.id})
+                SET e.method = r.method, e.path = r.path,
+                    e.handler = r.handler, e.file = r.file
+                WITH e, r
+                MATCH (f:File {path: r.fpath})
+                MERGE (f)-[:EXPOSES]->(e)
+            """, [
+                dict(id=e.id, method=e.method, path=e.path, handler=e.handler,
+                     file=e.file, fpath=e.controller_class[len("file:"):])
+                for e in endpoints
+                if e.controller_class.startswith("file:")
             ])
 
             # ── GraphQL Operations ────────────────────────────────
