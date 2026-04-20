@@ -50,10 +50,15 @@ class _FakeSession:
 
 
 class _FakeDriver:
-    def __init__(self, resolver):
+    def __init__(self, resolver, *, connectivity_error=None):
         self._resolver = resolver
         self._session = _FakeSession(resolver)
         self.closed = False
+        self._connectivity_error = connectivity_error
+
+    def verify_connectivity(self):
+        if self._connectivity_error:
+            raise self._connectivity_error
 
     def session(self):
         return self._session
@@ -534,3 +539,51 @@ def test_stats_include_cross_scope_edges_flag(monkeypatch):
     session = driver._session
     edge_cypher, _ = session.calls[1]
     assert " OR " in edge_cypher
+
+
+def test_stats_cli_service_unavailable(monkeypatch):
+    """stats emits clean JSON error and exits 2 on ServiceUnavailable."""
+    from typer.testing import CliRunner
+
+    from codegraph.cli import app
+    from neo4j import GraphDatabase
+    from neo4j.exceptions import ServiceUnavailable
+
+    driver = _FakeDriver(
+        lambda *a, **kw: [],
+        connectivity_error=ServiceUnavailable("Connection refused"),
+    )
+    monkeypatch.setattr(GraphDatabase, "driver", lambda *a, **kw: driver)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["stats", "--json", "--no-scope"])
+    assert result.exit_code == 2
+    data = json.loads(result.output)
+    assert data["ok"] is False
+    assert data["error"] == "connection"
+    assert "Connection refused" in data["message"]
+    assert driver.closed is True
+
+
+def test_stats_cli_auth_error(monkeypatch):
+    """stats emits clean JSON error and exits 2 on AuthError."""
+    from typer.testing import CliRunner
+
+    from codegraph.cli import app
+    from neo4j import GraphDatabase
+    from neo4j.exceptions import AuthError
+
+    driver = _FakeDriver(
+        lambda *a, **kw: [],
+        connectivity_error=AuthError("Unauthorized"),
+    )
+    monkeypatch.setattr(GraphDatabase, "driver", lambda *a, **kw: driver)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["stats", "--json", "--no-scope"])
+    assert result.exit_code == 2
+    data = json.loads(result.output)
+    assert data["ok"] is False
+    assert data["error"] == "connection"
+    assert "Unauthorized" in data["message"]
+    assert driver.closed is True

@@ -21,6 +21,7 @@ from typing import Any, Optional
 
 import typer
 from neo4j import GraphDatabase
+from neo4j.exceptions import AuthError, ServiceUnavailable
 from rich.console import Console
 from rich.table import Table
 
@@ -677,10 +678,14 @@ def validate(
     """Run the validation suite against an already-loaded graph."""
     from .validate import run_validation
 
-    report = run_validation(
-        uri, user, password, repo.resolve(),
-        console=None if as_json else console,
-    )
+    try:
+        report = run_validation(
+            uri, user, password, repo.resolve(),
+            console=None if as_json else console,
+        )
+    except (ServiceUnavailable, AuthError) as e:
+        _emit_error(as_json, "connection", str(e))
+        raise typer.Exit(code=2)
     if as_json:
         print(json.dumps({"ok": report.ok, "report": _serialize_report(report)}, indent=2))
     raise typer.Exit(code=0 if report.ok else 1)
@@ -760,12 +765,16 @@ def arch_check(
                     + ", ".join(effective_scope)
                 )
 
-    report = run_arch_check(
-        uri, user, password,
-        console=None if as_json else console,
-        config=arch_cfg,
-        scope=effective_scope,
-    )
+    try:
+        report = run_arch_check(
+            uri, user, password,
+            console=None if as_json else console,
+            config=arch_cfg,
+            scope=effective_scope,
+        )
+    except (ServiceUnavailable, AuthError) as e:
+        _emit_error(as_json, "connection", str(e))
+        raise typer.Exit(code=2)
     if as_json:
         print(report.to_json())
     raise typer.Exit(code=0 if report.ok else 1)
@@ -785,8 +794,12 @@ def query(
     """Run a Cypher query against the current graph."""
     driver = GraphDatabase.driver(uri, auth=(user, password))
     try:
+        driver.verify_connectivity()
         with driver.session() as s:
             rows = list(s.run(cypher))[:limit]
+    except (ServiceUnavailable, AuthError) as e:
+        _emit_error(as_json, "connection", str(e))
+        raise typer.Exit(code=2)
     finally:
         driver.close()
 
@@ -890,10 +903,14 @@ def stats(
 
     driver = GraphDatabase.driver(uri, auth=(user, password))
     try:
+        driver.verify_connectivity()
         result = _query_graph_stats(
             driver, effective_scope,
             cross_scope_edges=include_cross_scope_edges,
         )
+    except (ServiceUnavailable, AuthError) as e:
+        _emit_error(as_json, "connection", str(e))
+        raise typer.Exit(code=2)
     finally:
         driver.close()
 
