@@ -2,14 +2,14 @@
 
 > **Purpose of this document.** Capture enough context for a fresh agent session (or a human returning after time away) to continue work on codegraph without re-deriving state from scratch. Separate from the user-facing roadmap bullets in `README.md`, which stay short and pitch-oriented.
 >
-> **Last updated:** 2026-04-22 after commits `865271e` → `2083622` (fix(loader): use batch len() for READS_ATOM/WRITES_ATOM stats instead of DB-wide count — closes #220; 555 tests passing, v0.1.68).
+> **Last updated:** 2026-04-22 after commits `a6a5ee2` → `c1ed081` (fix(loader): add interface: to _FILE_BEARING_PREFIXES and fix iface: typo in test — closes #96; 556 tests passing, v0.1.69).
 
 ---
 
 ## TL;DR — where we are
 
-- **Branch:** `archon/task-fix-issue-220`. Fixes READS_ATOM / WRITES_ATOM edge stats using DB-wide `session.run("MATCH ... RETURN count(r)")` instead of `len()` of the current batch — causing incremental-mode stats to report the global DB total rather than edges created this run. Replaced both queries with `len(atom_reads)` / `len(atom_writes)`. Closes issue #220. v0.1.68.
-- **Tests:** 555 passing (1 excluded: MCP test requires `fastmcp` optional dep not installed in this env), 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
+- **Branch:** `archon/task-fix-issue-96`. Fixes incremental re-indexing dropping `interface:` nodes from `touched_files` tracking — `"interface:"` was absent from `_FILE_BEARING_PREFIXES` in `loader.py`, so `_file_from_id()` returned `None` for interface node IDs and their subgraphs were never cleaned during incremental runs. Also fixes a secondary `iface:` typo in `test_mcp.py` that never matched any real node ID. Closes issue #96. v0.1.69.
+- **Tests:** 556 passing (1 excluded: MCP test requires `fastmcp` optional dep not installed in this env), 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
 - **Graph indexed:** Twenty CRM is currently loaded into the local Neo4j container at `bolt://localhost:7688` (13,473 files, 2,559 classes, 6,088 methods, 5,562 CALLS, 6,708 hook usages, 4,593 RENDERS).
 - **MCP server:** 13 read-only tools + **2 write tools** (`wipe_graph`, `reindex_file`) gated by `--allow-write` flag + **29 prompt templates** (all Cypher blocks from `queries.md` auto-registered via `_register_query_prompts()`). `codegraph-mcp` console script registered. Smoke-tested via raw JSON-RPC.
 - **Package:** `cognitx-codegraph` v0.1.55 in `pyproject.toml`. Wheel + sdist build cleanly. **Not yet on PyPI** — needs one-time operational setup (Trusted Publisher registration). `release.yml` now waits for propagation and smoke-tests the published version.
@@ -21,14 +21,32 @@
 
 ---
 
-## Shipped since the last roadmap update (commit `f937391`)
+## Shipped since the last roadmap update (commit `a6a5ee2`)
 
 ```
-2083622 fix(loader): use batch len() for READS_ATOM/WRITES_ATOM stats instead of DB-wide count
-a97cf5f Merge pull request #221 from cognitx-leyton/archon/task-fix-issue-97
-1420d26 chore: bump version to 0.1.68
-650c32d docs(roadmap): update session handoff
+c1ed081 fix(loader): add interface: to _FILE_BEARING_PREFIXES and fix iface: typo in test
+b5bccba Merge pull request #222 from cognitx-leyton/archon/task-fix-issue-220
+80acca4 chore: bump version to 0.1.69
 ```
+
+### Loader — add `interface:` to `_FILE_BEARING_PREFIXES` (issue #96)
+
+- `c1ed081 fix(loader)` — Three files changed:
+
+  1. **`codegraph/codegraph/loader.py`** — Added `"interface:"` to `_FILE_BEARING_PREFIXES` (line 65). The generic `_file_from_id()` path-extraction logic (`rest.split("#", 1)[0]`) already handles `interface:<path>#<name>` without special-casing; the prefix was simply absent from the list, so interface node IDs returned `None` from `_file_from_id()` and were silently excluded from `touched_files`. This caused incremental re-indexing to skip cleaning stale interface subgraphs entirely.
+
+  2. **`codegraph/tests/test_incremental.py`** — Added `("interface:codegraph/cli.py#IFoo", "codegraph/cli.py")` as a new parametrize entry to `test_file_from_id` (line 425), covering the new prefix alongside existing `class:`, `func:`, `method:`, `atom:`, `endpoint:`, `gqlop:`, and `file:` entries.
+
+  3. **`codegraph/tests/test_mcp.py`** — Fixed secondary bug: `iface:` typo (line 1070) → `interface:` to match the `InterfaceNode.id` property format defined in `schema.py`. The old `iface:` prefix never existed in any schema dataclass and would never have matched a real node in the graph.
+
+  - **Completeness check:** All file-bearing `id` prefixes in `schema.py` are now present in `_FILE_BEARING_PREFIXES`. Zero remaining `iface:` occurrences in the codebase.
+  - **Tests**: 556 passed (1 new parametrize entry), 0 failures. Code review: 0 issues. Arch-check: 4/4 policies pass (1 skipped).
+
+- `b5bccba` — PR #222 merged (`archon/task-fix-issue-220`). Version bumped to v0.1.69 (`80acca4`).
+
+---
+
+## Previously shipped (through commit `2083622`)
 
 ### Loader — fix READS_ATOM/WRITES_ATOM stats using DB-wide count (issue #220)
 
