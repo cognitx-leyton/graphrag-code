@@ -222,6 +222,18 @@ finally:
     assert ("name", "", "teardown") in file_calls
 
 
+def test_module_level_nested_in_with(tmp_path):
+    """Module-level call inside with block."""
+    src = """
+with open("f") as fh:
+    process(fh)
+"""
+    r = _parse_snippet(tmp_path, src)
+    file_calls = [(k, n, t) for mid, k, n, t in r.method_calls
+                   if mid.startswith("file:")]
+    assert ("name", "", "process") in file_calls
+
+
 def test_module_level_nested_in_for(tmp_path):
     """Module-level call inside for loop (issue #227)."""
     src = """
