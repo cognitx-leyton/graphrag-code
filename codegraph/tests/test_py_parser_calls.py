@@ -222,6 +222,58 @@ finally:
     assert ("name", "", "teardown") in file_calls
 
 
+def test_module_level_nested_in_with(tmp_path):
+    """Module-level call inside with block."""
+    src = """
+with open("f") as fh:
+    process(fh)
+"""
+    r = _parse_snippet(tmp_path, src)
+    file_calls = [(k, n, t) for mid, k, n, t in r.method_calls
+                   if mid.startswith("file:")]
+    assert ("name", "", "process") in file_calls
+
+
+def test_module_level_nested_in_for(tmp_path):
+    """Module-level call inside for loop (issue #227)."""
+    src = """
+for plugin in plugins:
+    register(plugin)
+"""
+    r = _parse_snippet(tmp_path, src)
+    file_calls = [(k, n, t) for mid, k, n, t in r.method_calls
+                   if mid.startswith("file:")]
+    assert ("name", "", "register") in file_calls
+
+
+def test_module_level_nested_in_while(tmp_path):
+    """Module-level call inside while loop (issue #227)."""
+    src = """
+while not ready:
+    setup()
+"""
+    r = _parse_snippet(tmp_path, src)
+    file_calls = [(k, n, t) for mid, k, n, t in r.method_calls
+                   if mid.startswith("file:")]
+    assert ("name", "", "setup") in file_calls
+
+
+def test_module_level_nested_in_match(tmp_path):
+    """Module-level call inside match/case block (Python 3.10+)."""
+    src = """
+match command:
+    case 'quit':
+        shutdown()
+    case 'help':
+        show_help()
+"""
+    r = _parse_snippet(tmp_path, src)
+    file_calls = [(k, n, t) for mid, k, n, t in r.method_calls
+                   if mid.startswith("file:")]
+    assert ("name", "", "shutdown") in file_calls
+    assert ("name", "", "show_help") in file_calls
+
+
 def test_function_body_caller_id_is_func(tmp_path):
     """Caller ID for function-body calls uses func: prefix."""
     src = """

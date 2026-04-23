@@ -2,14 +2,14 @@
 
 > **Purpose of this document.** Capture enough context for a fresh agent session (or a human returning after time away) to continue work on codegraph without re-deriving state from scratch. Separate from the user-facing roadmap bullets in `README.md`, which stay short and pitch-oriented.
 >
-> **Last updated:** 2026-04-23 after commits `4a0d1f7` → `2ab4cfb` (feat(py_parser): track module-level calls and resolve bare function calls — closes #88; 574 tests passing, v0.1.72).
+> **Last updated:** 2026-04-23 after commits `4a0d1f7` → `0c56a81` (fix(py_parser): walk for/while loops in _walk_top_stmt for module-level call discovery — closes #227; 576 tests passing, v0.1.72).
 
 ---
 
 ## TL;DR — where we are
 
-- **Branch:** `archon/task-fix-issue-88`. Python parser now emits CALLS edges from function bodies (previously only methods) and module-level expression statements (including `if __name__ == "__main__"`, try/except/else/elif/finally blocks). Resolver Phase 4 falls back to `_resolve_call_target_func` for bare function calls with no receiver. Also closes #86/#83 (stale `CROSS_PACKAGE_PAIRS` docs replaced with correct TOML syntax). Closes issue #88. v0.1.72.
-- **Tests:** 574 passing (10 skipped, 1 excluded: MCP test requires `fastmcp` optional dep not installed in this env), 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
+- **Branch:** `archon/task-fix-issue-227`. Python parser's `_walk_top_stmt` now recurses into `for_statement` and `while_statement` nodes, so calls and imports inside module-level loops are captured. Two new tests added. Inline comment updated. Closes issue #227. v0.1.72.
+- **Tests:** 576 passing (10 skipped, 1 excluded: MCP test requires `fastmcp` optional dep not installed in this env), 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
 - **Graph indexed:** Twenty CRM is currently loaded into the local Neo4j container at `bolt://localhost:7688` (13,473 files, 2,559 classes, 6,088 methods, 5,562 CALLS, 6,708 hook usages, 4,593 RENDERS).
 - **MCP server:** 13 read-only tools + **2 write tools** (`wipe_graph`, `reindex_file`) gated by `--allow-write` flag + **29 prompt templates** (all Cypher blocks from `queries.md` auto-registered via `_register_query_prompts()`). `codegraph-mcp` console script registered. Smoke-tested via raw JSON-RPC.
 - **Package:** `cognitx-codegraph` v0.1.55 in `pyproject.toml`. Wheel + sdist build cleanly. **Not yet on PyPI** — needs one-time operational setup (Trusted Publisher registration). `release.yml` now waits for propagation and smoke-tests the published version.
@@ -24,13 +24,29 @@
 ## Shipped since the last roadmap update (commit `4a0d1f7`)
 
 ```
-2ab4cfb  feat(py_parser): track module-level calls and resolve bare function calls (#88)
+0c56a81  fix(py_parser): walk for/while loops in _walk_top_stmt for module-level call discovery (#227)
+da606ba  feat(py_parser): track module-level calls and fix arch-policies docs (#228)
 1d900d5  fix(arch_check): pass limit param only to sample query in _check_orphans (#226)
 3c9d5fa  Merge pull request #225 from cognitx-leyton/archon/task-fix-issue-93
 8843871  fix(arch_check): exact suppression counts via Cypher for built-in policies (#93)
 826bb89  chore: bump version to 0.1.72
 4a0d1f7  docs(roadmap): update session handoff
 ```
+
+### Python parser — walk for/while loops in _walk_top_stmt (issue #227)
+
+- `0c56a81 fix(py_parser)` — Two files changed:
+
+  1. **`codegraph/codegraph/py_parser.py`**:
+     - Added `"for_statement"` and `"while_statement"` to the compound-statement tuple in `_walk_top_stmt` (line 229). The recursion pattern `for c in node.children: self._walk_top_stmt(c)` is safe — tree-sitter `for_statement`/`while_statement` children include a `block` that is already handled at line 234; loop variable/condition fall through harmlessly.
+     - Updated inline comment at line 230-231 from "catches try/except imports, conditional imports" to also mention "loop-wrapped calls, with-block calls" so the comment accurately describes all handled statement types.
+     - Updated `walk_module` docstring to list `for_statement` and `while_statement` among the compound statement types that are recursed.
+
+  2. **`codegraph/tests/test_py_parser_calls.py`** — 2 new tests:
+     - `test_module_level_nested_in_for`: asserts a call inside a `for` loop at module scope emits a `CallEdge`.
+     - `test_module_level_nested_in_while`: asserts a call inside a `while` loop at module scope emits a `CallEdge`.
+
+  - **Tests**: 576 passed, 10 skipped, 0 failures. Code review: 1 issue found (stale comment) and fixed. Arch-check: 4/4 policies pass (1 skipped).
 
 ### Python parser — CALLS edges from function bodies + module-level code (issue #88)
 
