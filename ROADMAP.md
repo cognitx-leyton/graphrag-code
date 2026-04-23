@@ -2,14 +2,14 @@
 
 > **Purpose of this document.** Capture enough context for a fresh agent session (or a human returning after time away) to continue work on codegraph without re-deriving state from scratch. Separate from the user-facing roadmap bullets in `README.md`, which stay short and pitch-oriented.
 >
-> **Last updated:** 2026-04-22 after commits `2460d3a` → `archon/task-fix-issue-93` (fix(arch-check): exact suppression counts via Cypher COUNT filter — closes #93; 573 tests passing, v0.1.71).
+> **Last updated:** 2026-04-23 after commits `4a0d1f7` → `8cffb56` (fix(arch_check): pass limit param only to sample query in _check_orphans — closes #90; 563 tests passing, v0.1.72).
 
 ---
 
 ## TL;DR — where we are
 
-- **Branch:** `archon/task-fix-issue-93`. Suppression matching now uses Cypher COUNT filter for exact unsuppressed totals — `_count_unsuppressed()` dispatcher + 5 per-policy filtered count builders added to `arch_check.py`. `_apply_suppressions()` accepts `driver=`, `scope=`, `config=` kwargs and uses exact counts when a driver is available, with sample-based fallback otherwise. Closes issue #93. v0.1.71.
-- **Tests:** 573 passing (1 excluded: MCP test requires `fastmcp` optional dep not installed in this env), 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
+- **Branch:** `archon/task-fix-issue-90`. `_check_orphans` in `arch_check.py` now passes `limit` only to the sample query that references `$limit`, removing the spurious `$limit` parameter from the count query. Pattern now consistent with all sibling policies. Closes issue #90. v0.1.72.
+- **Tests:** 563 passing (10 skipped, 1 excluded: MCP test requires `fastmcp` optional dep not installed in this env), 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
 - **Graph indexed:** Twenty CRM is currently loaded into the local Neo4j container at `bolt://localhost:7688` (13,473 files, 2,559 classes, 6,088 methods, 5,562 CALLS, 6,708 hook usages, 4,593 RENDERS).
 - **MCP server:** 13 read-only tools + **2 write tools** (`wipe_graph`, `reindex_file`) gated by `--allow-write` flag + **29 prompt templates** (all Cypher blocks from `queries.md` auto-registered via `_register_query_prompts()`). `codegraph-mcp` console script registered. Smoke-tested via raw JSON-RPC.
 - **Package:** `cognitx-codegraph` v0.1.55 in `pyproject.toml`. Wheel + sdist build cleanly. **Not yet on PyPI** — needs one-time operational setup (Trusted Publisher registration). `release.yml` now waits for propagation and smoke-tests the published version.
@@ -21,15 +21,33 @@
 
 ---
 
-## Shipped since the last roadmap update (commit `2460d3a`)
+## Shipped since the last roadmap update (commit `4a0d1f7`)
 
 ```
-archon/task-fix-issue-93  fix(arch-check): exact suppression counts via Cypher COUNT filter
-bbc12fd  Merge pull request #224 from cognitx-leyton/archon/task-fix-issue-94
-e1bdcd0  chore: bump version to 0.1.71
-2460d3a  docs(roadmap): update session handoff
-b0e8739  fix(arch-check): validate suppression policy names and suggest corrections
+8cffb56  fix(arch_check): pass limit param only to sample query in _check_orphans
+3c9d5fa  Merge pull request #225 from cognitx-leyton/archon/task-fix-issue-93
+8843871  fix(arch_check): exact suppression counts via Cypher for built-in policies (#93)
+826bb89  chore: bump version to 0.1.72
+4a0d1f7  docs(roadmap): update session handoff
 ```
+
+### arch-check — fix orphan limit param passed only to sample query (issue #90)
+
+- `8cffb56 fix(arch_check)` — One file changed:
+
+  1. **`codegraph/codegraph/arch_check.py`** — In `_check_orphans()`:
+     - **Line 463**: `params: dict = {"limit": sample_limit}` → `params: dict = {}` — removed `$limit` from the shared params dict used by both count and sample queries.
+     - **Line 470**: `s.run(sample_cypher, **params)` → `s.run(sample_cypher, limit=sample_limit, **params)` — pass `limit` only to the sample query that actually contains `LIMIT $limit`.
+
+     The `count_cypher` query has no `LIMIT` clause and was receiving a spurious `$limit` parameter. This aligns `_check_orphans` with the count/sample param-split pattern already used by `_check_import_cycles`, `_check_layer_bypass`, and `_check_coupling_ceiling`.
+
+  - **Tests**: 563 passed, 10 skipped, 0 failures. Code review: 0 issues. Arch-check: 4/4 policies pass (1 skipped).
+
+- `3c9d5fa` — PR #225 merged (`archon/task-fix-issue-93`). Version bumped to v0.1.72 (`826bb89`).
+
+---
+
+## Previously shipped (through commit `3c9d5fa`)
 
 ### arch-check — exact suppression counts via Cypher COUNT filter (issue #93)
 
