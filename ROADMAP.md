@@ -2,14 +2,14 @@
 
 > **Purpose of this document.** Capture enough context for a fresh agent session (or a human returning after time away) to continue work on codegraph without re-deriving state from scratch. Separate from the user-facing roadmap bullets in `README.md`, which stay short and pitch-oriented.
 >
-> **Last updated:** 2026-04-23 after commits `4a0d1f7` → `797fe52` (feat(init): warn when orphaned containers from old naming scheme are found — closes #75; 595 tests passing, v0.1.72).
+> **Last updated:** 2026-04-23 after commits `4a0d1f7` → `0913656` (fix(init): sanitize directory names with special chars in container names — closes #74; 602 tests passing, v0.1.72).
 
 ---
 
 ## TL;DR — where we are
 
-- **Branch:** `archon/task-fix-issue-75`. `codegraph init` now warns when orphaned containers from the pre-0.1.10 naming scheme (`cognitx-codegraph-{repo_name}` without hash suffix) are found running. The check runs `docker ps --filter name=<old_prefix>`, filters out the current container and any false-positive superstring matches from other repos, and prints a yellow `docker rm -f` instruction for each orphan. Gracefully handles no-docker and daemon-down scenarios. Closes issue #75. v0.1.72.
-- **Tests:** 595 passing (10 skipped, 1 excluded: MCP test requires `fastmcp` optional dep not installed in this env), 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
+- **Branch:** `archon/task-fix-issue-74`. `codegraph init` now sanitizes directory names with special characters (spaces, dots, colons, etc.) before using them in Docker container names. Added `_sanitize_container_segment()` helper that replaces any char not in `[a-zA-Z0-9_.-]` with `-`, collapses consecutive dashes, strips leading/trailing `-` and `.`, and falls back to `"repo"` if the result is empty. Applied at both container-name construction sites: `_prompt_config` and `_warn_orphaned_containers`. Closes issue #74. v0.1.72.
+- **Tests:** 602 passing (10 skipped, 1 excluded: MCP test requires `fastmcp` optional dep not installed in this env), 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
 - **Graph indexed:** Twenty CRM is currently loaded into the local Neo4j container at `bolt://localhost:7688` (13,473 files, 2,559 classes, 6,088 methods, 5,562 CALLS, 6,708 hook usages, 4,593 RENDERS).
 - **MCP server:** 13 read-only tools + **2 write tools** (`wipe_graph`, `reindex_file`) gated by `--allow-write` flag + **29 prompt templates** (all Cypher blocks from `queries.md` auto-registered via `_register_query_prompts()`). `codegraph-mcp` console script registered. Smoke-tested via raw JSON-RPC.
 - **Package:** `cognitx-codegraph` v0.1.55 in `pyproject.toml`. Wheel + sdist build cleanly. **Not yet on PyPI** — needs one-time operational setup (Trusted Publisher registration). `release.yml` now waits for propagation and smoke-tests the published version.
@@ -21,20 +21,26 @@
 
 ---
 
-## Shipped since the last roadmap update (commit `4a0d1f7`)
+## Shipped since the last roadmap update (commit `88eeabb`)
 
 ```
-797fe52  feat(init): warn when orphaned containers from old naming scheme are found (#75)
-3680df5  feat(init): add --bolt-port and --http-port options to codegraph init (#232)
-bb7023d  feat(arch_config): add exclude_prefixes/exclude_names to orphan_detection policy (#231)
-34e4c96  fix(py_parser): walk for/while loops and match statements in _walk_top_stmt (#229)
-da606ba  feat(py_parser): track module-level calls and fix arch-policies docs (#228)
-1d900d5  fix(arch_check): pass limit param only to sample query in _check_orphans (#226)
-3c9d5fa  Merge pull request #225 from cognitx-leyton/archon/task-fix-issue-93
-8843871  fix(arch_check): exact suppression counts via Cypher for built-in policies (#93)
-826bb89  chore: bump version to 0.1.72
-4a0d1f7  docs(roadmap): update session handoff
+0913656  fix(init): sanitize directory names with special chars in container names (#74)
+88eeabb  feat(init): warn when orphaned containers from old naming scheme are found (#233)
 ```
+
+### init — sanitize directory names with special chars in container names (issue #74)
+
+- `0913656 fix(init)` — Two files changed:
+
+  1. **`codegraph/codegraph/init.py`** — Added `import re`. Added `_sanitize_container_segment(name: str) -> str` helper that: replaces any character not in `[a-zA-Z0-9_.-]` with `-`; collapses consecutive `-` into one; strips leading/trailing `-` and `.`; falls back to `"repo"` if the result is empty. Applied at both container-name construction call sites — `_prompt_config` (segment before hash suffix) and `_warn_orphaned_containers` (old-scheme prefix comparison). Closes issue #74.
+
+  2. **`codegraph/tests/test_init.py`** — Added `_sanitize_container_segment` to imports. 5 unit tests: spaces/special chars replaced with `-`, consecutive dashes collapsed, leading/trailing dashes/dots stripped, valid name passes through unchanged, empty-after-strip falls back to `"repo"`. 2 integration tests through `_prompt_config`: container name with a special-char dir is Docker-valid (`re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]*", ...)`), and the segment value matches `_sanitize_container_segment(root.name)`.
+
+  - **Code review**: 0 issues. Tests: 602 passed (7 new), 10 skipped. Arch-check: 4/4 policies pass (1 skipped).
+
+---
+
+## Previously shipped (through commit `88eeabb`)
 
 ### init — warn on orphaned containers from pre-0.1.10 naming scheme (issue #75)
 
@@ -128,8 +134,6 @@ da606ba  feat(py_parser): track module-level calls and fix arch-policies docs (#
 - `3c9d5fa` — PR #225 merged (`archon/task-fix-issue-93`). Version bumped to v0.1.72 (`826bb89`).
 
 ---
-
-## Previously shipped (through commit `3c9d5fa`)
 
 ### arch-check — exact suppression counts via Cypher COUNT filter (issue #93)
 
