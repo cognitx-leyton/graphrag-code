@@ -7,6 +7,7 @@ so the tests stay fast and pure. The end-to-end Docker path is covered by
 """
 from __future__ import annotations
 
+import io
 import re
 import subprocess
 from pathlib import Path
@@ -26,6 +27,7 @@ from codegraph.init import (
     _render,
     _scaffold_files,
     _template_vars,
+    _warn_orphaned_containers,
     run_init,
 )
 
@@ -146,6 +148,105 @@ def test_container_name_is_deterministic(tmp_path: Path):
     cfg1 = _prompt_config(shape, non_interactive=True, console=_silent_console())
     cfg2 = _prompt_config(shape, non_interactive=True, console=_silent_console())
     assert cfg1.container_name == cfg2.container_name
+
+
+# ── _warn_orphaned_containers ─────────────────────────────
+
+
+def test_warn_orphaned_container_prints_warning(tmp_path: Path, monkeypatch):
+    """Old-style container (no hash suffix) triggers a warning."""
+    repo_name = tmp_path.name
+    config = InitConfig(
+        packages=["."], cross_pairs=[], install_claude=True,
+        install_ci=True, setup_neo4j=True,
+        container_name=f"cognitx-codegraph-{repo_name}-abcd1234",
+    )
+    monkeypatch.setattr(
+        subprocess, "run",
+        lambda *a, **kw: subprocess.CompletedProcess(
+            a[0], 0, stdout=f"cognitx-codegraph-{repo_name}\n",
+        ),
+    )
+    console = Console(record=True, file=io.StringIO())
+    _warn_orphaned_containers(tmp_path, config, console)
+    text = console.export_text()
+    assert f"cognitx-codegraph-{repo_name}" in text
+    assert "docker rm -f" in text
+
+
+def test_warn_orphaned_container_no_false_positive(tmp_path: Path, monkeypatch):
+    """Current container name must NOT be flagged as orphan."""
+    repo_name = tmp_path.name
+    current_name = f"cognitx-codegraph-{repo_name}-abcd1234"
+    config = InitConfig(
+        packages=["."], cross_pairs=[], install_claude=True,
+        install_ci=True, setup_neo4j=True,
+        container_name=current_name,
+    )
+    monkeypatch.setattr(
+        subprocess, "run",
+        lambda *a, **kw: subprocess.CompletedProcess(
+            a[0], 0, stdout=f"{current_name}\n",
+        ),
+    )
+    console = Console(record=True, file=io.StringIO())
+    _warn_orphaned_containers(tmp_path, config, console)
+    assert "Warning" not in console.export_text()
+
+
+def test_warn_orphaned_container_ignores_other_repo(tmp_path: Path, monkeypatch):
+    """Container from a different repo whose name is a superstring must not be flagged."""
+    repo_name = tmp_path.name
+    config = InitConfig(
+        packages=["."], cross_pairs=[], install_claude=True,
+        install_ci=True, setup_neo4j=True,
+        container_name=f"cognitx-codegraph-{repo_name}-abcd1234",
+    )
+    # docker ps substring match might return a container from repo "myrepo-v2"
+    monkeypatch.setattr(
+        subprocess, "run",
+        lambda *a, **kw: subprocess.CompletedProcess(
+            a[0], 0,
+            stdout=f"cognitx-codegraph-{repo_name}-v2-beef5678\n",
+        ),
+    )
+    console = Console(record=True, file=io.StringIO())
+    _warn_orphaned_containers(tmp_path, config, console)
+    assert "Warning" not in console.export_text()
+
+
+def test_warn_orphaned_container_docker_unavailable(tmp_path: Path, monkeypatch):
+    """FileNotFoundError (docker not on PATH) must not crash."""
+    config = InitConfig(
+        packages=["."], cross_pairs=[], install_claude=True,
+        install_ci=True, setup_neo4j=True,
+        container_name="cognitx-codegraph-x-abcd1234",
+    )
+
+    def _raise(*a, **kw):
+        raise FileNotFoundError("docker")
+
+    monkeypatch.setattr(subprocess, "run", _raise)
+    console = Console(record=True, file=io.StringIO())
+    _warn_orphaned_containers(tmp_path, config, console)
+    assert console.export_text().strip() == ""
+
+
+def test_warn_orphaned_container_docker_daemon_down(tmp_path: Path, monkeypatch):
+    """CalledProcessError (daemon down) must not crash."""
+    config = InitConfig(
+        packages=["."], cross_pairs=[], install_claude=True,
+        install_ci=True, setup_neo4j=True,
+        container_name="cognitx-codegraph-x-abcd1234",
+    )
+
+    def _raise(*a, **kw):
+        raise subprocess.CalledProcessError(1, "docker")
+
+    monkeypatch.setattr(subprocess, "run", _raise)
+    console = Console(record=True, file=io.StringIO())
+    _warn_orphaned_containers(tmp_path, config, console)
+    assert console.export_text().strip() == ""
 
 
 # ── _render (template smoke) ────────────────────────────────

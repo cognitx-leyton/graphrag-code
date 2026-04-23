@@ -327,6 +327,41 @@ def _scaffold_files(
 # ── Docker orchestration + first index ───────────────────────
 
 
+def _warn_orphaned_containers(
+    root: Path,
+    config: InitConfig,
+    console: Console,
+) -> None:
+    """Detect pre-0.1.10 containers (no hash suffix) and print a warning."""
+    repo_name = root.name
+    old_prefix = f"cognitx-codegraph-{repo_name}"
+    try:
+        result = subprocess.run(
+            ["docker", "ps", "--filter", f"name={old_prefix}",
+             "--format", "{{.Names}}"],
+            capture_output=True, text=True, check=True,
+        )
+    except FileNotFoundError:
+        return
+    except subprocess.CalledProcessError:
+        return
+
+    for line in result.stdout.splitlines():
+        name = line.strip()
+        if not name or name == config.container_name:
+            continue
+        # Only flag containers that exactly match the old naming scheme
+        # (prefix with no hash suffix).  docker ps --filter name= does
+        # substring matching, so other repos' containers may appear.
+        if name != old_prefix:
+            continue
+        console.print(
+            f"[yellow]Warning:[/] found old container [bold]{name}[/] "
+            f"from a pre-0.1.10 install. "
+            f"Remove it with: [cyan]docker rm -f {name}[/]"
+        )
+
+
 def _start_and_wait_for_neo4j(
     root: Path,
     config: InitConfig,
@@ -428,6 +463,9 @@ def run_init(
         detected, non_interactive=non_interactive, console=console,
         bolt_port=bolt_port, http_port=http_port,
     )
+
+    if config.setup_neo4j and not skip_docker:
+        _warn_orphaned_containers(root, config, console)
 
     _scaffold_files(root, config, force=force, console=console)
 
