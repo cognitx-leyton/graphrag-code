@@ -2,13 +2,13 @@
 
 > **Purpose of this document.** Capture enough context for a fresh agent session (or a human returning after time away) to continue work on codegraph without re-deriving state from scratch. Separate from the user-facing roadmap bullets in `README.md`, which stay short and pitch-oriented.
 >
-> **Last updated:** 2026-04-23 after commits `4a0d1f7` → `c086f71` (feat(arch_config): add exclude_prefixes/exclude_names to orphan_detection policy — closes #87; 590 tests passing, v0.1.72).
+> **Last updated:** 2026-04-23 after commits `4a0d1f7` → `5d62ff8` (feat(init): add --bolt-port and --http-port options to codegraph init — closes #80/#73; 590 tests passing, v0.1.72).
 
 ---
 
 ## TL;DR — where we are
 
-- **Branch:** `archon/task-fix-issue-87`. `OrphanDetectionConfig` now accepts `exclude_prefixes` and `exclude_names` so users on unittest, nose, or custom naming conventions can configure orphan exclusions. Hardcoded `'test_'`/`setup_module` literals in `arch_check.py` replaced with parameterised Cypher params. 12 new tests (+8 config, +4 Cypher). Docs updated with unittest example. Closes issue #87. v0.1.72.
+- **Branch:** `archon/task-fix-issue-80`. `codegraph init` now accepts `--bolt-port` and `--http-port` CLI flags (and matching `bolt_port`/`http_port` kwargs in `run_init()`/`_prompt_config()`). The integration test `test_init_full_flow_with_docker` is now isolated to ports 17687/17474 so it never collides with a running Neo4j. Logic bug fixed: `bolt_port if bolt_port is not None else _DEFAULT_BOLT_PORT` instead of falsy `or`. Closes issues #80 and #73. v0.1.72.
 - **Tests:** 590 passing (10 skipped, 1 excluded: MCP test requires `fastmcp` optional dep not installed in this env), 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
 - **Graph indexed:** Twenty CRM is currently loaded into the local Neo4j container at `bolt://localhost:7688` (13,473 files, 2,559 classes, 6,088 methods, 5,562 CALLS, 6,708 hook usages, 4,593 RENDERS).
 - **MCP server:** 13 read-only tools + **2 write tools** (`wipe_graph`, `reindex_file`) gated by `--allow-write` flag + **29 prompt templates** (all Cypher blocks from `queries.md` auto-registered via `_register_query_prompts()`). `codegraph-mcp` console script registered. Smoke-tested via raw JSON-RPC.
@@ -24,7 +24,8 @@
 ## Shipped since the last roadmap update (commit `4a0d1f7`)
 
 ```
-c086f71  feat(arch_config): add exclude_prefixes/exclude_names to orphan_detection policy (#87)
+5d62ff8  feat(init): add --bolt-port and --http-port options to codegraph init (#80/#73)
+bb7023d  feat(arch_config): add exclude_prefixes/exclude_names to orphan_detection policy (#231)
 34e4c96  fix(py_parser): walk for/while loops and match statements in _walk_top_stmt (#229)
 da606ba  feat(py_parser): track module-level calls and fix arch-policies docs (#228)
 1d900d5  fix(arch_check): pass limit param only to sample query in _check_orphans (#226)
@@ -33,6 +34,18 @@ da606ba  feat(py_parser): track module-level calls and fix arch-policies docs (#
 826bb89  chore: bump version to 0.1.72
 4a0d1f7  docs(roadmap): update session handoff
 ```
+
+### init — custom Neo4j ports + fix silent integration-test failure (issues #80 / #73)
+
+- `5d62ff8 feat(init)` — Three files changed:
+
+  1. **`codegraph/codegraph/init.py`** — Added `bolt_port: int | None = None` and `http_port: int | None = None` to both `_prompt_config()` and `run_init()`. Values are threaded into `InitConfig` using `bolt_port if bolt_port is not None else _DEFAULT_BOLT_PORT` (not `or`, which would mishandle port 0). `_template_vars()` already reads `config.bolt_port`/`config.http_port` — no further change needed.
+
+  2. **`codegraph/codegraph/cli.py`** — Added `--bolt-port` and `--http-port` `Optional[int]` Typer options (default `None`) to the `init` command, passed through to `run_init()`.
+
+  3. **`codegraph/tests/test_init_integration.py`** — Added `_TEST_BOLT_PORT = 17687` / `_TEST_HTTP_PORT = 17474` constants. `test_init_full_flow_with_docker` now passes `--bolt-port 17687 --http-port 17474`, isolating the test from any existing Neo4j instance on default ports 7687/7474.
+
+  - **Code review**: 1 issue found (`bolt_port or default` used truthiness — silently reverts on port 0) and fixed to `is not None` guard. Tests: 590 passed (10 skipped, 1 deselected). Arch-check: 4/4 policies pass (1 skipped).
 
 ### arch-check — configurable orphan exclusions in orphan_detection policy (issue #87)
 
@@ -963,12 +976,12 @@ Beyond unit/integration tests, these were dogfooded against real systems:
 
 | Thing | Value |
 |---|---|
-| Current branch | `archon/task-fix-issue-104` |
+| Current branch | `archon/task-fix-issue-80` |
 | Base branch | `main` |
-| Unpushed commits | 1 (`ec94bff` — fix(resolver): resolve npm tsconfig presets from node_modules, pending PR) |
-| Open PR | None. PR #216 (issue #214 — arch-check disabled field) merged to main. |
-| Working tree | Clean (untracked: `.claude/plans/resolve-npm-tsconfig-presets.plan.md`) |
-| Test count | 551 passing + 1 deselected |
+| Unpushed commits | 1 (`5d62ff8` — feat(init): add --bolt-port and --http-port options to codegraph init, pending PR) |
+| Open PR | None. PR #231 (issue #87 — orphan_detection exclude_prefixes/names) merged to main. |
+| Working tree | Clean (untracked: `.claude/plans/fix-init-docker-test.plan.md`) |
+| Test count | 590 passing + 10 skipped + 1 deselected |
 | Test runtime | ~16 s |
 | Byte-compile | Clean |
 | Last editable install | After `357ad03`. Re-run `cd codegraph && .venv/bin/pip install -e .` after any `pyproject.toml` edit. |
