@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 
+from . import __version__
 from .schema import ParseResult, parse_result_from_dict, parse_result_to_dict
 
 
@@ -41,17 +42,23 @@ class AstCache:
     def load_manifest(self) -> dict[str, str]:
         """Load ``{rel_path: sha256_hash}`` from ``manifest.json``.
 
-        Returns ``{}`` if the file is missing or corrupt.
+        Returns ``{}`` if the file is missing, corrupt, or was written by a
+        different codegraph version (parsing logic may have changed).
         """
         try:
-            return json.loads(self.manifest_path.read_text(encoding="utf-8"))
+            raw = json.loads(self.manifest_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return {}
+        if isinstance(raw, dict) and raw.get("version") == __version__:
+            return raw.get("files", {})
+        # Legacy (flat dict) or version mismatch — treat as empty.
+        return {}
 
     def save_manifest(self, manifest: dict[str, str]) -> None:
         """Atomically write *manifest* to ``manifest.json``."""
         tmp = self.manifest_path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(manifest), encoding="utf-8")
+        payload = {"version": __version__, "files": manifest}
+        tmp.write_text(json.dumps(payload), encoding="utf-8")
         os.replace(tmp, self.manifest_path)
 
     def get(self, rel_path: str, current_hash: str) -> ParseResult | None:

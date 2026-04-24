@@ -139,6 +139,28 @@ def test_manifest_missing_returns_empty(tmp_path: Path) -> None:
     assert cache.load_manifest() == {}
 
 
+def test_manifest_version_mismatch_returns_empty(tmp_path: Path) -> None:
+    """If manifest was written by a different codegraph version, treat as empty."""
+    import json
+    cache = AstCache(tmp_path)
+    cache.manifest_path.write_text(
+        json.dumps({"version": "0.0.0-fake", "files": {"a.py": "abc"}}),
+        encoding="utf-8",
+    )
+    assert cache.load_manifest() == {}
+
+
+def test_manifest_legacy_flat_dict_returns_empty(tmp_path: Path) -> None:
+    """Pre-versioned manifests (flat dict) are treated as empty on load."""
+    import json
+    cache = AstCache(tmp_path)
+    cache.manifest_path.write_text(
+        json.dumps({"a.py": "abc"}),
+        encoding="utf-8",
+    )
+    assert cache.load_manifest() == {}
+
+
 # ── ParseResult serialisation ─────────────────────────────────────
 
 
