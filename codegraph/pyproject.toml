@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cognitx-codegraph"
-version = "0.1.86"
+version = "0.1.87"
 description = "Code knowledge graph for Claude Code & AI coding agents — index TypeScript, Python, NestJS, FastAPI, React into Neo4j and query architecture in Cypher. Note: v0.2.0 is deprecated, use 0.1.x."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -65,6 +65,11 @@ python = [
   # the primary one; install with `pip install "codegraph[python]"` or the
   # `all` extra to enable the Python frontend.
   "tree-sitter-python>=0.23,<0.25",
+]
+watch = [
+  # File-system watcher for auto graph rebuild on save.
+  # Optional because the hook-based workflow (post-commit) works without it.
+  "watchdog>=4.0",
 ]
 test = [
   "pytest>=8.0",
