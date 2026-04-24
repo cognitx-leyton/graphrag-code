@@ -61,6 +61,19 @@ class AstCache:
         tmp.write_text(json.dumps(payload), encoding="utf-8")
         os.replace(tmp, self.manifest_path)
 
+    def prune_stale(self, old_manifest: dict[str, str], new_manifest: dict[str, str]) -> int:
+        """Delete cache files whose hashes are in *old_manifest* but not *new_manifest*."""
+        new_hashes = set(new_manifest.values())
+        stale = {h for h in old_manifest.values() if h not in new_hashes}
+        removed = 0
+        for h in stale:
+            try:
+                (self.cache_dir / f"{h}.json").unlink()
+                removed += 1
+            except OSError:
+                pass
+        return removed
+
     def get(self, rel_path: str, current_hash: str) -> ParseResult | None:
         """Return cached ParseResult if *current_hash* matches, else ``None``."""
         entry = self.cache_dir / f"{current_hash}.json"
