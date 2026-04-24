@@ -7,7 +7,7 @@ Guidance for Claude Code (and similar coding agents) working on this repo.
 **codegraph** (package: `codegraph`) is a Python tool that indexes TypeScript and Python codebases into a Neo4j property graph. It walks source with tree-sitter, recognises framework constructs (NestJS controllers / injectables / modules, React components and hooks, TypeORM entities, GraphQL operations, Python classes and decorators), and loads typed nodes + edges into Neo4j. Downstream consumers:
 
 - **CLI**: `codegraph index`, `codegraph query`, `codegraph validate`, `codegraph wipe` — Typer app.
-- **MCP server**: `codegraph-mcp` stdio server with 10 read-only tools. Optional extra (`pip install "codegraph[mcp]"`).
+- **MCP server**: `codegraph-mcp` stdio server with 16 read-only tools. Optional extra (`pip install "codegraph[mcp]"`).
 - **REPL**: interactive Cypher shell at `codegraph repl`.
 
 This repo is itself **Python**, and codegraph parses Python since Stage 1 shipped. So we can dogfood: Claude Code can query the graph of codegraph-the-codebase while implementing codegraph-the-tool.
@@ -96,7 +96,7 @@ Key source files:
 | `codegraph/codegraph/resolver.py` | Cross-file import resolution (TS + Python) |
 | `codegraph/codegraph/loader.py` | Neo4j batch writer + constraints |
 | `codegraph/codegraph/schema.py` | Node + edge dataclasses (language-agnostic) |
-| `codegraph/codegraph/mcp.py` | FastMCP stdio server (10 tools) |
+| `codegraph/codegraph/mcp.py` | FastMCP stdio server (16 tools) |
 | `codegraph/codegraph/framework.py` | Per-package framework detection (TS only in Stage 1) |
 | `codegraph/codegraph/ignore.py` | `.codegraphignore` parser |
 | `codegraph/codegraph/config.py` | `codegraph.toml` / `pyproject.toml` config loader |
