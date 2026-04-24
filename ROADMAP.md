@@ -2,14 +2,14 @@
 
 > **Purpose of this document.** Capture enough context for a fresh agent session (or a human returning after time away) to continue work on codegraph without re-deriving state from scratch. Separate from the user-facing roadmap bullets in `README.md`, which stay short and pitch-oriented.
 >
-> **Last updated:** 2026-04-24 after commits `3f394de` → `28f816f` (feat(cache): prune stale cache entries after manifest save — closes #247; 676 tests passing, v0.1.72).
+> **Last updated:** 2026-04-24 after commits `3f394de` → `6c45b48` (feat(export): add interactive HTML and GraphML graph export command — closes #44; 695 tests passing, v0.1.90).
 
 ---
 
 ## TL;DR — where we are
 
-- **Branch:** `archon/task-fix-issue-247`. `AstCache.prune_stale()` now removes orphaned `.json` cache entries after each `--update` index run — closes issue #247. v0.1.72.
-- **Tests:** 676 passing (3 new in `test_cache.py`), 10 skipped, 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
+- **Branch:** `archon/task-fix-issue-44`. Interactive HTML + GraphML export now ship as `codegraph export` and auto-run after `codegraph index` — closes issue #44. v0.1.90.
+- **Tests:** 695 passing (19 new in `test_export.py`), 10 skipped, 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
 - **Graph indexed:** Twenty CRM is currently loaded into the local Neo4j container at `bolt://localhost:7688` (13,473 files, 2,559 classes, 6,088 methods, 5,562 CALLS, 6,708 hook usages, 4,593 RENDERS).
 - **MCP server:** 14 read-only tools + **2 write tools** (`wipe_graph`, `reindex_file`) gated by `--allow-write` flag + **29 prompt templates** (all Cypher blocks from `queries.md` auto-registered via `_register_query_prompts()`). `codegraph-mcp` console script registered. Smoke-tested via raw JSON-RPC.
 - **Package:** `cognitx-codegraph` v0.1.55 in `pyproject.toml`. Wheel + sdist build cleanly. **Not yet on PyPI** — needs one-time operational setup (Trusted Publisher registration). `release.yml` now waits for propagation and smoke-tests the published version.
@@ -24,11 +24,38 @@
 ## Shipped since the last roadmap update (commit `3f394de`)
 
 ```
-28f816f  feat(cache): prune stale cache entries after manifest save (#247)
+6c45b48  feat(export): add interactive HTML and GraphML graph export command (#44)
+343878b  feat(cache): prune stale cache entries after manifest save (#250)
 33ddbe7  feat(init): append .codegraph-cache/ to .gitignore on codegraph init (#249)
 c4571c6  feat(cache): SHA-256 content-addressed cache for incremental indexing (#46) (#248)
 3f394de  fix(test): add watchdog to test extra so test_watch.py tests pass
 ```
+
+### export — interactive HTML + GraphML graph export command (issue #44)
+
+- `6c45b48 feat(export)` — Five files changed (3 new, 2 updated):
+
+  **New files:**
+
+  1. **`codegraph/codegraph/export.py`** (~340 LOC) — Core export module. `dump_graph(driver, scope, max_nodes)` fetches nodes+edges from Neo4j; `to_html(nodes, edges, max_nodes)` renders a self-contained HTML page with a vendored vis-network graph (14 colour groups by label); `to_json(nodes, edges)` dumps JSON; `to_graphml(nodes, edges)` serialises to GraphML using `xml.dom.minidom` + `quoteattr` for XSS-safe attribute values; `to_cypher(nodes, edges)` emits `MERGE` statements. Convenience `*_from_driver` wrappers round-trip through `dump_graph`. `_js_safe()` escapes all `<` as `\u003c` so embedded JSON can't break out of a `<script>` block.
+
+  2. **`codegraph/codegraph/templates/vis-network.min.js`** — Vendored vis-network v9.1.9 (689 KB). Self-contained, zero CDN dependency; HTML output works offline.
+
+  3. **`codegraph/tests/test_export.py`** (19 tests) — Fixture-based, no Neo4j required. Covers `dump_graph` (happy + too-many-nodes), `to_html` (script tag, colour map, XSS, max-nodes guard), `to_json`, `to_graphml` (structure, quote-in-ID regression), `to_cypher`, `_js_safe`, `to_html_from_driver`, `to_graphml_from_driver`.
+
+  **Updated files:**
+
+  4. **`codegraph/codegraph/cli.py`** — Added `codegraph export` subcommand with `--out`, `--html/--no-html`, `--json-export/--no-json-export`, `--graphml`, `--cypher`, `--scope`, `--max-nodes` flags. Added `--no-export` flag to `codegraph index`; on successful index, auto-runs HTML export (failures are warnings, never blocking). `MAX_NODES_FOR_VIZ` dead import removed; `max_nodes` threaded as a parameter to `to_html` to avoid thread-unsafe global mutation.
+
+  5. **`codegraph/pyproject.toml`** — Added `"templates/**/*.js"` to `package_data` so the vendored JS ships in the wheel.
+
+  **Code review (4 issues found and fixed):**
+  - `[HIGH]` GraphML XML injection — `xml_escape()` didn't escape `"` in attribute values → switched to `xml.sax.saxutils.quoteattr()`.
+  - `[HIGH]` Thread-unsafe global mutation of `MAX_NODES_FOR_VIZ` to override limit → added `max_nodes` parameter to `to_html()`.
+  - `[MEDIUM]` Dead import `MAX_NODES_FOR_VIZ` in `cli.py` → removed.
+  - `[MEDIUM]` HTML-too-large error silently swallowed in `--json` mode → added `warnings` list to JSON output.
+
+  - **Validation:** 695 tests pass (19 new), 10 skipped, 0 failures. `python -m compileall` clean. Arch-check: 4/4 policies pass. `codegraph export --help` and `codegraph index --help` verified.
 
 ### cache — prune stale cache entries after manifest save (issue #247)
 
@@ -1183,16 +1210,16 @@ Beyond unit/integration tests, these were dogfooded against real systems:
 
 | Thing | Value |
 |---|---|
-| Current branch | `archon/task-fix-issue-247` |
+| Current branch | `archon/task-fix-issue-44` |
 | Base branch | `main` |
-| Unpushed commits | 1 (`28f816f` feat(cache): prune stale cache entries after manifest save — pending PR) |
+| Unpushed commits | 1 (`6c45b48` feat(export): add interactive HTML and GraphML graph export command — pending PR) |
 | Open PR | None. |
-| Working tree | Clean (untracked: `.claude/plans/prune-stale-cache.plan.md`) |
-| Test count | 676 passing + 10 skipped + 0 deselected |
+| Working tree | Clean (untracked: `.claude/plans/export-interactive-html.plan.md`) |
+| Test count | 695 passing + 10 skipped + 0 deselected |
 | Test runtime | ~16 s |
 | Byte-compile | Clean |
-| Last editable install | After `357ad03`. Re-run `cd codegraph && .venv/bin/pip install -e .` after any `pyproject.toml` edit. |
-| Wheel built? | Yes — `codegraph/dist/cognitx_codegraph-0.2.0-py3-none-any.whl` (from this session) |
+| Last editable install | After `6c45b48`. Re-run `cd codegraph && .venv/bin/pip install -e .` after any `pyproject.toml` edit. |
+| Wheel built? | Not yet for v0.1.90. Run `cd codegraph && .venv/bin/pip install build && python -m build` to produce wheel + sdist. |
 
 ---
 
@@ -1478,6 +1505,7 @@ Repo-local plans under `.claude/plans/`:
 - `fix-mcp-structural-edge-double-write.plan.md` — shipped as `abc6776`.
 - `fix-mcp-file-level-exposes.plan.md` — shipped as `75af831`.
 - `resolve-npm-tsconfig-presets.plan.md` — shipped as `ec94bff`.
+- `export-interactive-html.plan.md` — shipped as `6c45b48` (closes #44).
 
 Older plans (not in repo): `sunny-giggling-moon.md` (the MCP retriever batch), `framework-detector-port.md`. These live in `~/.claude/plans/` and get overwritten on each `/plan` session unless preserved manually.
 

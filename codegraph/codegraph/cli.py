@@ -191,6 +191,8 @@ def index(
              "Implies --no-wipe.",
     ),
     as_json: bool = typer.Option(False, "--json", help="Emit stats as JSON on stdout."),
+    no_export: bool = typer.Option(False, "--no-export",
+                                   help="Skip HTML/JSON export after indexing."),
 ) -> None:
     """Index a TypeScript monorepo into Neo4j."""
     try:
@@ -222,6 +224,28 @@ def index(
         print(json.dumps({"ok": True, "stats": stats}, indent=2))
     else:
         _print_load_stats_dict(stats)
+
+    # Auto-export HTML + JSON unless suppressed
+    if not no_export:
+        try:
+            from .export import dump_graph as _dump_graph, to_html, to_json
+            out_dir = repo.resolve() / "codegraph-out"
+            driver = GraphDatabase.driver(uri, auth=(user, password))
+            try:
+                driver.verify_connectivity()
+                nodes, edges = _dump_graph(driver, scope=packages)
+            finally:
+                driver.close()
+            out_dir.mkdir(parents=True, exist_ok=True)
+            to_html(nodes, edges, out_dir / "graph.html")
+            to_json(nodes, edges, out_dir / "graph.json")
+            if not as_json:
+                console.print(
+                    f"[green]✓[/] exported graph.html + graph.json → {out_dir}"
+                )
+        except Exception as exc:  # noqa: BLE001
+            if not as_json:
+                console.print(f"[yellow]warning:[/] export failed: {exc}")
 
 
 def _run_index(
@@ -1017,6 +1041,115 @@ def stats(
         for k, v in sorted(result.get("edges", {}).items()):
             t.add_row(f"edge:{k}", str(v))
         console.print(t)
+
+
+# ── export ──────────────────────────────────────────────────────────
+
+@app.command()
+def export(
+    uri: str = DEFAULT_URI,
+    user: str = DEFAULT_USER,
+    password: str = DEFAULT_PASS,
+    output_dir: Path = typer.Option(Path("codegraph-out"), "--out", "-o",
+                                    help="Directory for exported files."),
+    do_html: bool = typer.Option(True, "--html/--no-html",
+                                 help="Produce interactive graph.html."),
+    do_json: bool = typer.Option(True, "--json-export/--no-json-export",
+                                 help="Produce graph.json."),
+    graphml: bool = typer.Option(False, "--graphml",
+                                 help="Produce graph.graphml."),
+    cypher: bool = typer.Option(False, "--cypher",
+                                help="Produce graph.cypher."),
+    scope: Optional[list[str]] = typer.Option(None, "--scope", "-s",
+                                              help="Restrict to paths starting with prefix (repeatable)."),
+    no_scope: bool = typer.Option(False, "--no-scope",
+                                  help="Disable auto-scope even when packages are configured."),
+    max_nodes: int = typer.Option(5000, "--max-nodes",
+                                  help="Max nodes for HTML visualisation."),
+    as_json: bool = typer.Option(False, "--json",
+                                 help="Emit status as JSON on stdout."),
+    repo: Path = typer.Option(Path("."), "--repo",
+                              help="Repo root for config lookup.",
+                              exists=True, file_okay=False),
+) -> None:
+    """Export the graph as interactive HTML, JSON, GraphML, or Cypher."""
+    from .export import (
+        dump_graph as _dump_graph,
+        to_html as _to_html,
+        to_json as _to_json,
+        to_graphml as _to_graphml,
+        to_cypher as _to_cypher,
+    )
+
+    # Auto-scope from config
+    effective_scope = scope
+    if scope is None and not no_scope:
+        cfg = load_config(repo.resolve())
+        if cfg.packages:
+            effective_scope = list(cfg.packages)
+            if not as_json:
+                console.print(
+                    f"[dim]auto-scope from {cfg.source}:[/] "
+                    + ", ".join(effective_scope)
+                )
+
+    driver = GraphDatabase.driver(uri, auth=(user, password))
+    try:
+        driver.verify_connectivity()
+        nodes, edges = _dump_graph(driver, scope=effective_scope)
+    except (ServiceUnavailable, AuthError) as e:
+        _emit_error(as_json, "connection", str(e))
+        raise typer.Exit(code=2)
+    finally:
+        driver.close()
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    written: list[str] = []
+
+    warnings: list[str] = []
+
+    if do_html:
+        html_path = output_dir / "graph.html"
+        try:
+            _to_html(nodes, edges, html_path, max_nodes=max_nodes)
+            written.append(str(html_path))
+        except ValueError as exc:
+            warnings.append(str(exc))
+            if not as_json:
+                console.print(f"[yellow]warning:[/] {exc}")
+
+    if do_json:
+        json_path = output_dir / "graph.json"
+        _to_json(nodes, edges, json_path)
+        written.append(str(json_path))
+
+    if graphml:
+        gml_path = output_dir / "graph.graphml"
+        _to_graphml(nodes, edges, gml_path)
+        written.append(str(gml_path))
+
+    if cypher:
+        cyp_path = output_dir / "graph.cypher"
+        _to_cypher(nodes, edges, cyp_path)
+        written.append(str(cyp_path))
+
+    if as_json:
+        result: dict[str, Any] = {
+            "ok": True,
+            "nodes": len(nodes),
+            "edges": len(edges),
+            "files": written,
+        }
+        if warnings:
+            result["warnings"] = warnings
+        print(json.dumps(result, indent=2))
+    else:
+        for f in written:
+            console.print(f"[green]✓[/] {f}")
+        console.print(
+            f"[bold]exported {len(nodes)} nodes, {len(edges)} edges "
+            f"→ {len(written)} file(s)[/]"
+        )
 
 
 # ── error emission helper ────────────────────────────────────────────
