@@ -112,4 +112,5 @@ codegraph = [
     "templates/**/*.md",
     "templates/**/*.yml",
     "templates/**/*.toml",
+    "templates/**/*.js",
 ]
