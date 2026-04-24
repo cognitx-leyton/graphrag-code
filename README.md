@@ -128,8 +128,9 @@ Restart Claude Code. Five tools become available:
 | `gql_operation_callers(op_name, op_type, limit)` | Who calls a GraphQL query / mutation / subscription, optionally narrowed by type. |
 | `most_injected_services(limit)` | Rank `@Injectable` classes by number of unique callers — the classic "DI hub detection" query. |
 | `find_class(name_pattern, limit)` | Case-sensitive substring search over class names, backed by the `class_name` index. |
+| `find_function(name_pattern, limit)` | Case-sensitive substring search over function and method names, backed by the `func_name` and `method_name` indexes. |
 
-All ten tools share a single long-lived Neo4j driver and open sessions in `READ_ACCESS` mode. Configuration is env-var only (the same `CODEGRAPH_NEO4J_*` vars the CLI uses). The server is stdio-only — no network exposure.
+All 16 tools share a single long-lived Neo4j driver and open sessions in `READ_ACCESS` mode. Configuration is env-var only (the same `CODEGRAPH_NEO4J_*` vars the CLI uses). The server is stdio-only — no network exposure.
 
 ## 🏗️ Architecture
 
