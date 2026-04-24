@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cognitx-codegraph"
-version = "0.1.92"
+version = "0.1.93"
 description = "Code knowledge graph for Claude Code & AI coding agents — index TypeScript, Python, NestJS, FastAPI, React into Neo4j and query architecture in Cypher. Note: v0.2.0 is deprecated, use 0.1.x."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -75,6 +75,13 @@ benchmark = [
   # Precise BPE token counting. Without this, benchmark uses chars/4
   # approximation which is sufficient for relative comparisons.
   "tiktoken>=0.7",
+]
+analyze = [
+  # Leiden community detection + GRAPH_REPORT.md generation.
+  # graspologic provides the Leiden algorithm; networkx is the fallback
+  # (Louvain) and the in-memory graph representation for analysis.
+  "networkx>=3.0",
+  "graspologic>=3.4; python_version < '3.13'",
 ]
 test = [
   "pytest>=8.0",

@@ -114,6 +114,7 @@ _CONSTRAINTS = [
     "CREATE CONSTRAINT team_name IF NOT EXISTS FOR (n:Team) REQUIRE n.name IS UNIQUE",
     "CREATE CONSTRAINT route_id IF NOT EXISTS FOR (n:Route) REQUIRE n.id IS UNIQUE",
     "CREATE CONSTRAINT package_name IF NOT EXISTS FOR (n:Package) REQUIRE n.name IS UNIQUE",
+    "CREATE CONSTRAINT edgegroup_id IF NOT EXISTS FOR (n:EdgeGroup) REQUIRE n.id IS UNIQUE",
 ]
 
 _INDEXES = [
@@ -124,6 +125,7 @@ _INDEXES = [
     "CREATE INDEX endpoint_path IF NOT EXISTS FOR (n:Endpoint) ON (n.path)",
     "CREATE INDEX class_file IF NOT EXISTS FOR (n:Class) ON (n.file)",
     "CREATE INDEX gqlop_name IF NOT EXISTS FOR (n:GraphQLOperation) ON (n.name)",
+    "CREATE INDEX edgegroup_kind IF NOT EXISTS FOR (n:EdgeGroup) ON (n.kind)",
 ]
 
 

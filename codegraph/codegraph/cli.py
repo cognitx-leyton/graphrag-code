@@ -195,6 +195,8 @@ def index(
                                    help="Skip HTML/JSON export after indexing."),
     no_benchmark: bool = typer.Option(False, "--no-benchmark",
                                       help="Skip token-reduction benchmark after indexing."),
+    no_analyze: bool = typer.Option(False, "--no-analyze",
+                                    help="Skip Leiden community detection + GRAPH_REPORT after indexing."),
 ) -> None:
     """Index a TypeScript monorepo into Neo4j."""
     try:
@@ -267,6 +269,35 @@ def index(
         except Exception as exc:  # noqa: BLE001
             if not as_json:
                 console.print(f"[yellow]warning:[/] benchmark failed: {exc}")
+
+    # Auto-analyze unless suppressed
+    if not no_analyze:
+        try:
+            from .analyze import run_analysis
+            from .report import generate_report, write_report
+            an_cfg = load_config(repo.resolve())
+            an_cfg = merge_cli_overrides(an_cfg, packages=packages)
+            an_scope = list(an_cfg.packages) or None
+            an_driver = GraphDatabase.driver(uri, auth=(user, password))
+            try:
+                an_driver.verify_connectivity()
+                analysis = run_analysis(
+                    an_driver, scope=an_scope,
+                    console=None if as_json else console,
+                )
+            finally:
+                an_driver.close()
+            report_text = generate_report(analysis)
+            out_dir = repo.resolve() / "codegraph-out"
+            write_report(report_text, out_dir / "GRAPH_REPORT.md")
+            if not as_json:
+                console.print(
+                    f"[green]✓[/] GRAPH_REPORT.md → {out_dir} "
+                    f"({analysis['community_count']} communities)"
+                )
+        except Exception as exc:  # noqa: BLE001
+            if not as_json:
+                console.print(f"[yellow]warning:[/] analyze failed: {exc}")
 
 
 def _run_index(
@@ -1241,6 +1272,76 @@ def benchmark(
 
     if min_reduction is not None and result.reduction_ratio < min_reduction:
         raise typer.Exit(code=1)
+
+
+# ── report ────────────────────────────────────────────────────────────
+
+@app.command()
+def report(
+    repo: Path = typer.Argument(Path("."), exists=True, file_okay=False),
+    uri: str = DEFAULT_URI,
+    user: str = DEFAULT_USER,
+    password: str = DEFAULT_PASS,
+    as_json: bool = typer.Option(False, "--json", help="Emit analysis as JSON on stdout."),
+    out: Path = typer.Option(Path("codegraph-out"), "--out", "-o",
+                             help="Directory for GRAPH_REPORT.md output."),
+    scope: Optional[list[str]] = typer.Option(
+        None, "--scope", "-s",
+        help="Restrict analysis to these package paths (repeatable).",
+    ),
+    no_scope: bool = typer.Option(
+        False, "--no-scope",
+        help="Disable auto-scope even when packages are configured.",
+    ),
+) -> None:
+    """Generate GRAPH_REPORT.md from community detection on the live graph."""
+    try:
+        from .analyze import run_analysis
+        from .report import generate_report, write_report
+    except ImportError as e:
+        console.print(
+            f"[bold red]missing dependency:[/] {e}\n"
+            "Install the [analyze] extra: pip install 'codegraph[analyze]'"
+        )
+        raise typer.Exit(code=2)
+
+    # Auto-scope from config when no explicit flag given.
+    effective_scope = scope
+    if scope is None and not no_scope:
+        cfg = load_config(repo.resolve())
+        if cfg.packages:
+            effective_scope = list(cfg.packages)
+            if not as_json:
+                console.print(
+                    f"[dim]auto-scope from {cfg.source}:[/] "
+                    + ", ".join(effective_scope)
+                )
+
+    packages = effective_scope or []
+    try:
+        driver = GraphDatabase.driver(uri, auth=(user, password))
+        try:
+            driver.verify_connectivity()
+            analysis = run_analysis(
+                driver, scope=packages or None,
+                console=None if as_json else console,
+            )
+        finally:
+            driver.close()
+    except (ServiceUnavailable, AuthError) as e:
+        _emit_error(as_json, "connection", str(e))
+        raise typer.Exit(code=2)
+
+    if as_json:
+        print(json.dumps({"ok": True, "analysis": analysis}, indent=2))
+    else:
+        report_text = generate_report(analysis)
+        out_dir = repo.resolve() / out
+        write_report(report_text, out_dir / "GRAPH_REPORT.md")
+        console.print(
+            f"[green]✓[/] GRAPH_REPORT.md → {out_dir} "
+            f"({analysis['community_count']} communities)"
+        )
 
 
 # ── error emission helper ────────────────────────────────────────────
