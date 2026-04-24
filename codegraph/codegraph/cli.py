@@ -261,7 +261,6 @@ def index(
                 packages=list(bench_cfg.packages),
             )
             bench_out = repo.resolve() / "codegraph-out"
-            bench_out.mkdir(parents=True, exist_ok=True)
             write_benchmark_json(bench_result, bench_out)
             if not as_json:
                 print_benchmark_summary(bench_result, console)
