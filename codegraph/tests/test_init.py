@@ -456,6 +456,75 @@ def test_scaffold_respects_opt_outs(tmp_path: Path):
     assert (tmp_path / ".arch-policies.toml").exists()
 
 
+# ── .gitignore cache entry ──────────────────────────────────
+
+
+def test_scaffold_creates_gitignore_with_cache_entry(tmp_path: Path):
+    _make_git_repo(tmp_path)
+    config = InitConfig(
+        packages=["src"], cross_pairs=[],
+        install_claude=False, install_ci=False, setup_neo4j=False,
+        container_name="cognitx-codegraph-demo",
+    )
+    _scaffold_files(tmp_path, config, force=False, console=_silent_console())
+
+    gitignore = tmp_path / ".gitignore"
+    assert gitignore.exists()
+    content = gitignore.read_text()
+    assert ".codegraph-cache/" in content
+    assert "# codegraph" in content
+
+
+def test_scaffold_appends_cache_entry_to_existing_gitignore(tmp_path: Path):
+    _make_git_repo(tmp_path)
+    (tmp_path / ".gitignore").write_text("node_modules/\n*.pyc\n")
+
+    config = InitConfig(
+        packages=["src"], cross_pairs=[],
+        install_claude=False, install_ci=False, setup_neo4j=False,
+        container_name="cognitx-codegraph-demo",
+    )
+    _scaffold_files(tmp_path, config, force=False, console=_silent_console())
+
+    content = (tmp_path / ".gitignore").read_text()
+    assert "node_modules/" in content         # existing preserved
+    assert "*.pyc" in content                 # existing preserved
+    assert ".codegraph-cache/" in content     # entry appended
+
+
+def test_scaffold_gitignore_cache_entry_is_idempotent(tmp_path: Path):
+    _make_git_repo(tmp_path)
+    config = InitConfig(
+        packages=["src"], cross_pairs=[],
+        install_claude=False, install_ci=False, setup_neo4j=False,
+        container_name="cognitx-codegraph-demo",
+    )
+    _scaffold_files(tmp_path, config, force=False, console=_silent_console())
+    first = (tmp_path / ".gitignore").read_text()
+    _scaffold_files(tmp_path, config, force=False, console=_silent_console())
+    second = (tmp_path / ".gitignore").read_text()
+    assert first == second
+
+
+def test_scaffold_gitignore_no_trailing_newline(tmp_path: Path):
+    _make_git_repo(tmp_path)
+    (tmp_path / ".gitignore").write_text("node_modules/")  # no trailing \n
+
+    config = InitConfig(
+        packages=["src"], cross_pairs=[],
+        install_claude=False, install_ci=False, setup_neo4j=False,
+        container_name="cognitx-codegraph-demo",
+    )
+    _scaffold_files(tmp_path, config, force=False, console=_silent_console())
+
+    content = (tmp_path / ".gitignore").read_text()
+    assert "node_modules/" in content
+    assert ".codegraph-cache/" in content
+    # Entry must be on its own line (no corruption)
+    lines = content.splitlines()
+    assert ".codegraph-cache/" in lines
+
+
 # ── run_init full flow (docker + index disabled) ────────────
 
 
@@ -473,6 +542,10 @@ def test_run_init_non_interactive_happy_path(tmp_path: Path, monkeypatch):
     # Sanity check: scaffolder ran
     assert (tmp_path / ".arch-policies.toml").exists()
     assert (tmp_path / ".claude" / "commands" / "graph.md").exists()
+    # .gitignore has cache entry
+    gitignore = tmp_path / ".gitignore"
+    assert gitignore.exists()
+    assert ".codegraph-cache/" in gitignore.read_text()
 
 
 def test_run_init_outside_git_repo(tmp_path: Path, monkeypatch):

@@ -82,6 +82,11 @@ def test_init_scaffold_only_no_docker(fake_monorepo: Path):
     assert claude_md.exists()
     assert "codegraph knowledge graph" in claude_md.read_text()
 
+    # .gitignore includes cache exclusion
+    gitignore = fake_monorepo / ".gitignore"
+    assert gitignore.exists()
+    assert ".codegraph-cache/" in gitignore.read_text()
+
 
 @pytest.mark.skipif(not _docker_available(), reason="docker not installed")
 @pytest.mark.slow
