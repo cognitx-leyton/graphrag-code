@@ -2,14 +2,14 @@
 
 > **Purpose of this document.** Capture enough context for a fresh agent session (or a human returning after time away) to continue work on codegraph without re-deriving state from scratch. Separate from the user-facing roadmap bullets in `README.md`, which stay short and pitch-oriented.
 >
-> **Last updated:** 2026-04-24 after commits `3f394de` → `2ecf12a` (feat(init): append .codegraph-cache/ to .gitignore on codegraph init — closes #246; 673 tests passing, v0.1.72).
+> **Last updated:** 2026-04-24 after commits `3f394de` → `28f816f` (feat(cache): prune stale cache entries after manifest save — closes #247; 676 tests passing, v0.1.72).
 
 ---
 
 ## TL;DR — where we are
 
-- **Branch:** `archon/task-fix-issue-246`. `codegraph init` now appends `.codegraph-cache/` to `.gitignore` — closes issue #246. v0.1.72.
-- **Tests:** 673 passing (4 new in `test_init.py` + 2 assertion additions in integration tests), 10 skipped, 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
+- **Branch:** `archon/task-fix-issue-247`. `AstCache.prune_stale()` now removes orphaned `.json` cache entries after each `--update` index run — closes issue #247. v0.1.72.
+- **Tests:** 676 passing (3 new in `test_cache.py`), 10 skipped, 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
 - **Graph indexed:** Twenty CRM is currently loaded into the local Neo4j container at `bolt://localhost:7688` (13,473 files, 2,559 classes, 6,088 methods, 5,562 CALLS, 6,708 hook usages, 4,593 RENDERS).
 - **MCP server:** 14 read-only tools + **2 write tools** (`wipe_graph`, `reindex_file`) gated by `--allow-write` flag + **29 prompt templates** (all Cypher blocks from `queries.md` auto-registered via `_register_query_prompts()`). `codegraph-mcp` console script registered. Smoke-tested via raw JSON-RPC.
 - **Package:** `cognitx-codegraph` v0.1.55 in `pyproject.toml`. Wheel + sdist build cleanly. **Not yet on PyPI** — needs one-time operational setup (Trusted Publisher registration). `release.yml` now waits for propagation and smoke-tests the published version.
@@ -24,10 +24,30 @@
 ## Shipped since the last roadmap update (commit `3f394de`)
 
 ```
-2ecf12a  feat(init): append .codegraph-cache/ to .gitignore on codegraph init
+28f816f  feat(cache): prune stale cache entries after manifest save (#247)
+33ddbe7  feat(init): append .codegraph-cache/ to .gitignore on codegraph init (#249)
 c4571c6  feat(cache): SHA-256 content-addressed cache for incremental indexing (#46) (#248)
 3f394de  fix(test): add watchdog to test extra so test_watch.py tests pass
 ```
+
+### cache — prune stale cache entries after manifest save (issue #247)
+
+- `28f816f feat(cache)` — Two files changed (1 updated, 1 updated):
+
+  **Updated files:**
+
+  1. **`codegraph/codegraph/cache.py`** — Added `AstCache.prune_stale(old_manifest, new_manifest) -> int` method (~12 LOC). Computes `set(old_manifest.values()) - set(new_manifest.values())` (stale content hashes) then unlinks the corresponding `.json` files from the cache directory. Tolerates missing files via `except OSError: pass`. Returns count of actually-deleted files.
+
+  2. **`codegraph/codegraph/cli.py`** — Calls `cache.prune_stale(cached_manifest, manifest)` after `save_manifest`, guarded by `max_files is None` (same guard as save) to avoid false deletions when `--max-files` truncates. Appends `{pruned} pruned` to the existing cache log line.
+
+  **New tests (`codegraph/tests/test_cache.py`, lines 165–196)** — 3 new tests:
+  - `test_prune_stale_removes_orphan_entries` — orphan `.json` removed, survivor preserved, return value == 1.
+  - `test_prune_stale_no_op_when_manifests_equal` — identical manifests → returns 0, no files removed.
+  - `test_prune_stale_tolerates_missing_file` — stale hash with no on-disk file → no crash, returns 0.
+
+  **Code review (0 issues):** Path traversal risk assessed (hash values are SHA-256 hex digests — no path separators). Ordering is correct (save_manifest before prune_stale — on crash during prune, manifest is intact and orphans are harmless debris). Guard `max_files is None` consistent with save guard.
+
+  - **Validation:** 676 tests pass, 10 skipped, 0 failures. Arch-check: 4/4 policies pass (1 skipped).
 
 ### init — append `.codegraph-cache/` to `.gitignore` on `codegraph init` (issue #246)
 
@@ -1163,12 +1183,12 @@ Beyond unit/integration tests, these were dogfooded against real systems:
 
 | Thing | Value |
 |---|---|
-| Current branch | `archon/task-fix-issue-246` |
+| Current branch | `archon/task-fix-issue-247` |
 | Base branch | `main` |
-| Unpushed commits | 3 (`3f394de` fix(test): watchdog to test extra; `c4571c6` feat(cache): SHA-256 cache; `2ecf12a` feat(init): append .codegraph-cache/ to .gitignore — pending PR) |
+| Unpushed commits | 1 (`28f816f` feat(cache): prune stale cache entries after manifest save — pending PR) |
 | Open PR | None. |
-| Working tree | Clean (untracked: `.claude/plans/fix-init-gitignore-cache.plan.md`) |
-| Test count | 673 passing + 10 skipped + 0 deselected |
+| Working tree | Clean (untracked: `.claude/plans/prune-stale-cache.plan.md`) |
+| Test count | 676 passing + 10 skipped + 0 deselected |
 | Test runtime | ~16 s |
 | Byte-compile | Clean |
 | Last editable install | After `357ad03`. Re-run `cd codegraph && .venv/bin/pip install -e .` after any `pyproject.toml` edit. |
