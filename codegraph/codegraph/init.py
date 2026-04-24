@@ -291,6 +291,26 @@ def _append_claude_md(root: Path, snippet: str, console: Console) -> None:
         console.print(f"  [green]wrote[/] {target}")
 
 
+def _ensure_gitignore_entry(root: Path, console: Console) -> None:
+    """Add ``.codegraph-cache/`` to ``.gitignore`` if not already present."""
+    target = root / ".gitignore"
+    entry = ".codegraph-cache/"
+    if target.exists():
+        with open(target, encoding="utf-8", newline="") as fh:
+            existing = fh.read()
+        if any(line.strip() == entry for line in existing.splitlines()):
+            console.print(f"  [yellow]skip[/] {target} (already contains {entry})")
+            return
+        sep = "" if existing.endswith("\n") else "\n"
+        with open(target, "w", encoding="utf-8", newline="") as fh:
+            fh.write(existing + sep + "\n# codegraph\n" + entry + "\n")
+        console.print(f"  [green]appended[/] {entry} to {target}")
+    else:
+        with open(target, "w", encoding="utf-8", newline="") as fh:
+            fh.write("# codegraph\n" + entry + "\n")
+        console.print(f"  [green]wrote[/] {target}")
+
+
 def _scaffold_files(
     root: Path,
     config: InitConfig,
@@ -338,6 +358,9 @@ def _scaffold_files(
 
     # CLAUDE.md snippet — appended rather than overwritten
     _append_claude_md(root, _render("claude-md-snippet.md", variables), console)
+
+    # .gitignore — ensure cache dir is excluded
+    _ensure_gitignore_entry(root, console)
 
 
 # ── Docker orchestration + first index ───────────────────────

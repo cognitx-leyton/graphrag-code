@@ -2,14 +2,14 @@
 
 > **Purpose of this document.** Capture enough context for a fresh agent session (or a human returning after time away) to continue work on codegraph without re-deriving state from scratch. Separate from the user-facing roadmap bullets in `README.md`, which stay short and pitch-oriented.
 >
-> **Last updated:** 2026-04-24 after commits `3f394de` → `2b0d78a` (feat(cache): add SHA-256 content-addressed cache for incremental indexing — closes #46; 667 tests passing, v0.1.72).
+> **Last updated:** 2026-04-24 after commits `3f394de` → `2ecf12a` (feat(init): append .codegraph-cache/ to .gitignore on codegraph init — closes #246; 673 tests passing, v0.1.72).
 
 ---
 
 ## TL;DR — where we are
 
-- **Branch:** `archon/task-fix-issue-46-v3`. SHA-256 content-addressed AST cache for `codegraph index --update` shipped — closes issue #46. v0.1.72.
-- **Tests:** 667 passing (14 new: 11 in `test_cache.py` + 3 in `test_incremental.py`), 10 skipped, 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
+- **Branch:** `archon/task-fix-issue-246`. `codegraph init` now appends `.codegraph-cache/` to `.gitignore` — closes issue #246. v0.1.72.
+- **Tests:** 673 passing (4 new in `test_init.py` + 2 assertion additions in integration tests), 10 skipped, 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
 - **Graph indexed:** Twenty CRM is currently loaded into the local Neo4j container at `bolt://localhost:7688` (13,473 files, 2,559 classes, 6,088 methods, 5,562 CALLS, 6,708 hook usages, 4,593 RENDERS).
 - **MCP server:** 14 read-only tools + **2 write tools** (`wipe_graph`, `reindex_file`) gated by `--allow-write` flag + **29 prompt templates** (all Cypher blocks from `queries.md` auto-registered via `_register_query_prompts()`). `codegraph-mcp` console script registered. Smoke-tested via raw JSON-RPC.
 - **Package:** `cognitx-codegraph` v0.1.55 in `pyproject.toml`. Wheel + sdist build cleanly. **Not yet on PyPI** — needs one-time operational setup (Trusted Publisher registration). `release.yml` now waits for propagation and smoke-tests the published version.
@@ -24,9 +24,30 @@
 ## Shipped since the last roadmap update (commit `3f394de`)
 
 ```
-2b0d78a  feat(cache): add SHA-256 content-addressed cache for incremental indexing (#46)
+2ecf12a  feat(init): append .codegraph-cache/ to .gitignore on codegraph init
+c4571c6  feat(cache): SHA-256 content-addressed cache for incremental indexing (#46) (#248)
 3f394de  fix(test): add watchdog to test extra so test_watch.py tests pass
 ```
+
+### init — append `.codegraph-cache/` to `.gitignore` on `codegraph init` (issue #246)
+
+- `2ecf12a feat(init)` — Three files changed (2 updated, 0 new):
+
+  **Updated files:**
+
+  1. **`codegraph/codegraph/init.py`** — Added `_ensure_gitignore_entry(root, console)` helper (~30 LOC, mirrors `_append_claude_md` pattern). Creates `.gitignore` if absent; appends `# codegraph\n.codegraph-cache/` with blank-line separator if the entry is missing; skips silently if already present. Handles missing trailing newline. Called unconditionally from `_scaffold_files()` after the CLAUDE.md append step.
+
+  2. **`codegraph/tests/test_init.py`** — 4 new unit tests + 2 assertion additions:
+     - `test_scaffold_creates_gitignore_with_cache_entry` — no pre-existing `.gitignore`; file created with entry.
+     - `test_scaffold_appends_cache_entry_to_existing_gitignore` — pre-existing entries preserved; new entry appended.
+     - `test_scaffold_gitignore_cache_entry_is_idempotent` — second `_scaffold_files()` call produces identical content (no duplication).
+     - `test_scaffold_gitignore_no_trailing_newline` — handles `.gitignore` with missing trailing `\n`.
+     - Added `.gitignore` content assertion to `test_init_scaffold_only_no_docker` (integration).
+     - Added `.gitignore` content assertion to `test_run_init_non_interactive_happy_path`.
+
+  **Code review (0 issues):** Match logic uses `line.strip() == entry` so commented lines don't false-match. Trailing newline detection consistent with `_append_claude_md`. Empty-file cosmetic quirk (two leading newlines) matches existing codebase behaviour — not fixed.
+
+  - **Validation:** 673 tests pass, 10 skipped, 0 failures. Arch-check: 4/4 policies pass (1 skipped). `codegraph init` in a fresh tmp dir now creates `.gitignore` containing `.codegraph-cache/`.
 
 ### cache — SHA-256 content-addressed AST cache for `--update` flag (issue #46)
 
@@ -1142,12 +1163,12 @@ Beyond unit/integration tests, these were dogfooded against real systems:
 
 | Thing | Value |
 |---|---|
-| Current branch | `archon/task-fix-issue-46-v3` |
+| Current branch | `archon/task-fix-issue-246` |
 | Base branch | `main` |
-| Unpushed commits | 2 (`3f394de` fix(test): watchdog to test extra; `2b0d78a` feat(cache): SHA-256 cache for incremental indexing — pending PR) |
+| Unpushed commits | 3 (`3f394de` fix(test): watchdog to test extra; `c4571c6` feat(cache): SHA-256 cache; `2ecf12a` feat(init): append .codegraph-cache/ to .gitignore — pending PR) |
 | Open PR | None. |
-| Working tree | Clean (untracked: `.claude/plans/sha256-cache-incremental-indexing.plan.md`) |
-| Test count | 667 passing + 10 skipped + 0 deselected |
+| Working tree | Clean (untracked: `.claude/plans/fix-init-gitignore-cache.plan.md`) |
+| Test count | 673 passing + 10 skipped + 0 deselected |
 | Test runtime | ~16 s |
 | Byte-compile | Clean |
 | Last editable install | After `357ad03`. Re-run `cd codegraph && .venv/bin/pip install -e .` after any `pyproject.toml` edit. |
