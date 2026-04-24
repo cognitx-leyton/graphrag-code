@@ -76,6 +76,13 @@ benchmark = [
   # approximation which is sufficient for relative comparisons.
   "tiktoken>=0.7",
 ]
+analyze = [
+  # Leiden community detection + GRAPH_REPORT.md generation.
+  # graspologic provides the Leiden algorithm; networkx is the fallback
+  # (Louvain) and the in-memory graph representation for analysis.
+  "networkx>=3.0",
+  "graspologic>=3.4; python_version < '3.13'",
+]
 test = [
   "pytest>=8.0",
   "pytest-cov>=5.0",
