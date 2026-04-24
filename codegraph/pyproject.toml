@@ -71,6 +71,11 @@ watch = [
   # Optional because the hook-based workflow (post-commit) works without it.
   "watchdog>=4.0",
 ]
+benchmark = [
+  # Precise BPE token counting. Without this, benchmark uses chars/4
+  # approximation which is sufficient for relative comparisons.
+  "tiktoken>=0.7",
+]
 test = [
   "pytest>=8.0",
   "pytest-cov>=5.0",
