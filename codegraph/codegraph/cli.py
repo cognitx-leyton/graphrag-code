@@ -421,7 +421,10 @@ def _run_index(
         if max_files is None:
             deleted_files = {p for p in cached_manifest if p not in new_manifest}
         ast_cache.save_manifest(new_manifest)
-        say(f"  cache: {cache_hits} hits, {len(changed_files)} misses, {len(deleted_files)} deleted")
+        pruned = 0
+        if max_files is None:
+            pruned = ast_cache.prune_stale(cached_manifest, new_manifest)
+        say(f"  cache: {cache_hits} hits, {len(changed_files)} misses, {len(deleted_files)} deleted, {pruned} pruned")
 
     parse_time = time.time() - t0
     say(f"[bold green]✓[/] parsed {len(index_obj.files_by_path)} files in {parse_time:.1f}s")

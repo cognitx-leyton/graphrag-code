@@ -161,6 +161,39 @@ def test_manifest_legacy_flat_dict_returns_empty(tmp_path: Path) -> None:
     assert cache.load_manifest() == {}
 
 
+# ── Pruning ───────────────────────────────────────────────────────
+
+
+def test_prune_stale_removes_orphaned_entries(tmp_path: Path) -> None:
+    cache = AstCache(tmp_path)
+    cache.put("a.py", "h1", _make_parse_result("a.py"))
+    cache.put("b.py", "h2", _make_parse_result("b.py"))
+    cache.put("b.py", "h3", _make_parse_result("b.py"))
+
+    old = {"a.py": "h1", "b.py": "h2"}
+    new = {"a.py": "h1", "b.py": "h3"}
+    assert cache.prune_stale(old, new) == 1
+    assert (cache.cache_dir / "h1.json").exists()
+    assert not (cache.cache_dir / "h2.json").exists()
+    assert (cache.cache_dir / "h3.json").exists()
+
+
+def test_prune_stale_no_op_when_nothing_changed(tmp_path: Path) -> None:
+    cache = AstCache(tmp_path)
+    cache.put("a.py", "h1", _make_parse_result("a.py"))
+
+    manifest = {"a.py": "h1"}
+    assert cache.prune_stale(manifest, manifest) == 0
+    assert (cache.cache_dir / "h1.json").exists()
+
+
+def test_prune_stale_tolerates_missing_file(tmp_path: Path) -> None:
+    cache = AstCache(tmp_path)
+    old = {"a.py": "h1"}
+    new: dict[str, str] = {}
+    assert cache.prune_stale(old, new) == 0
+
+
 # ── ParseResult serialisation ─────────────────────────────────────
 
 
