@@ -122,6 +122,7 @@ addopts = "-m 'not slow'"
 # `codegraph init` can't find its own templates after `pip install`.
 codegraph = [
     "templates/**/*.md",
+    "templates/**/*.mdc",
     "templates/**/*.yml",
     "templates/**/*.toml",
     "templates/**/*.js",

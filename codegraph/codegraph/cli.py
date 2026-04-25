@@ -54,6 +54,10 @@ app = typer.Typer(
 )
 hook_app = typer.Typer(help="Manage codegraph git hooks (post-commit, post-checkout).")
 app.add_typer(hook_app, name="hook")
+install_app = typer.Typer(help="Install codegraph as always-on context for an AI platform.")
+app.add_typer(install_app, name="install")
+uninstall_app = typer.Typer(help="Remove codegraph integration from an AI platform.")
+app.add_typer(uninstall_app, name="uninstall")
 console = Console()
 
 
@@ -1415,6 +1419,58 @@ def watch(
         packages=packages,
         uri=uri, user=user, password=password,
     ))
+
+
+# ── install / uninstall sub-apps ───────────────────────────────────
+
+
+@install_app.callback(invoke_without_command=True)
+def _install_callback(
+    ctx: typer.Context,
+    all_: bool = typer.Option(False, "--all", help="Install for all detected platforms."),
+) -> None:
+    """Install codegraph as always-on context for an AI platform."""
+    if all_:
+        from .platforms import install_all
+        from .init import _find_git_root
+        root = _find_git_root(Path.cwd())
+        template_vars = {"NEO4J_BOLT_PORT": os.environ.get("CODEGRAPH_NEO4J_BOLT_PORT", "7687")}
+        results = install_all(root, template_vars=template_vars, console=console)
+        for r in results:
+            console.print(r)
+    elif ctx.invoked_subcommand is None:
+        console.print("[red]Specify a platform or use --all[/]")
+        raise typer.Exit(code=1)
+
+
+def _make_install_cmd(platform_name: str, display_name: str):
+    def _cmd() -> None:
+        from .platforms import install_platform
+        from .init import _find_git_root
+        root = _find_git_root(Path.cwd())
+        template_vars = {"NEO4J_BOLT_PORT": os.environ.get("CODEGRAPH_NEO4J_BOLT_PORT", "7687")}
+        result = install_platform(root, platform_name, template_vars=template_vars, console=console)
+        console.print(result)
+    _cmd.__doc__ = f"Install codegraph for {display_name}."
+    return _cmd
+
+
+def _make_uninstall_cmd(platform_name: str, display_name: str):
+    def _cmd() -> None:
+        from .platforms import uninstall_platform
+        from .init import _find_git_root
+        root = _find_git_root(Path.cwd())
+        result = uninstall_platform(root, platform_name, console=console)
+        console.print(result)
+    _cmd.__doc__ = f"Remove codegraph from {display_name}."
+    return _cmd
+
+
+from .platforms import PLATFORMS as _PLATFORMS
+
+for _name, _cfg in _PLATFORMS.items():
+    install_app.command(name=_name)(_make_install_cmd(_name, _cfg.display_name))
+    uninstall_app.command(name=_name)(_make_uninstall_cmd(_name, _cfg.display_name))
 
 
 if __name__ == "__main__":
