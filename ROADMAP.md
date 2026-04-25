@@ -2,14 +2,14 @@
 
 > **Purpose of this document.** Capture enough context for a fresh agent session (or a human returning after time away) to continue work on codegraph without re-deriving state from scratch. Separate from the user-facing roadmap bullets in `README.md`, which stay short and pitch-oriented.
 >
-> **Last updated:** 2026-04-25 after commits `09f9d8a` → `ea07455` (fix(install): resolve template variables in claude platform install — closes #256; 797 tests passing, v0.1.95).
+> **Last updated:** 2026-04-25 after commits `ea07455` → `f321b8f` (fix(install): preserve shared AGENTS.md sections during partial uninstall — closes #257; 802 tests passing, v0.1.95).
 
 ---
 
 ## TL;DR — where we are
 
-- **Branch:** `archon/task-fix-issue-256`. Template-variable fix for `codegraph install claude` (and `--all`): all 7 vars (`NEO4J_BOLT_PORT`, `NEO4J_HTTP_PORT`, `PACKAGE_PATHS_FLAGS`, `DEFAULT_PACKAGE_PREFIX`, `CONTAINER_NAME`, `CROSS_PAIRS_TOML`, `PIPX_VERSION`) now resolved via `_build_install_vars(root)`. Closes issue #256. v0.1.95.
-- **Tests:** 797 passing (1 new regression test: `test_install_claude_no_unresolved_vars`), 11 skipped, 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
+- **Branch:** `archon/task-fix-issue-257`. Manifest-based tracking for multi-platform installs: `uninstall_platform()` now reads `.codegraph/platforms.json` before removing a shared rules section (e.g. `AGENTS.md`). If another installed platform still needs the section, it is preserved with a yellow warning. Manifest updated on every install/uninstall, cleaned up when empty. Closes issue #257. v0.1.95.
+- **Tests:** 802 passing (5 new: manifest creation, manifest cleanup, section preservation, last-platform removal, backwards-compat with missing manifest), 11 skipped, 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
 - **Graph indexed:** Twenty CRM is currently loaded into the local Neo4j container at `bolt://localhost:7688` (13,473 files, 2,559 classes, 6,088 methods, 5,562 CALLS, 6,708 hook usages, 4,593 RENDERS).
 - **MCP server:** 15 read-only tools (incl. new `describe_group`) + **2 write tools** (`wipe_graph`, `reindex_file`) gated by `--allow-write` flag + **29 prompt templates** (all Cypher blocks from `queries.md` auto-registered via `_register_query_prompts()`). `codegraph-mcp` console script registered. Smoke-tested via raw JSON-RPC.
 - **Package:** `cognitx-codegraph` v0.1.55 in `pyproject.toml`. Wheel + sdist build cleanly. **Not yet on PyPI** — needs one-time operational setup (Trusted Publisher registration). `release.yml` now waits for propagation and smoke-tests the published version.
@@ -21,9 +21,10 @@
 
 ---
 
-## Shipped since the last roadmap update (commit `09f9d8a`)
+## Shipped since the last roadmap update (commit `ea07455`)
 
 ```
+f321b8f  fix(install): preserve shared AGENTS.md sections during partial uninstall (issue #257)
 ea07455  fix(install): resolve template variables in claude platform install (issue #256)
 d27301c  feat(install): add multi-platform codegraph install command (#258, closes #48)
 d2f08e4  feat(schema): add edge-level confidence labels to CALLS, IMPORTS, and resolver edges (#255)
@@ -36,6 +37,31 @@ e0a172d  feat(analyze): add Leiden community detection and graph analysis (#253)
 c4571c6  feat(cache): SHA-256 content-addressed cache for incremental indexing (#46) (#248)
 3f394de  fix(test): add watchdog to test extra so test_watch.py tests pass
 ```
+
+### install — preserve shared AGENTS.md sections during partial uninstall (issue #257)
+
+- `f321b8f fix(install)` — Two files changed:
+
+  **`codegraph/codegraph/platforms.py`**:
+  - Added `_MANIFEST_FILE = ".codegraph/platforms.json"` constant.
+  - Added `_read_manifest(root) -> set[str]` — reads the manifest JSON into a set of platform names; returns empty set if file is absent or corrupt.
+  - Added `_write_manifest(root, platforms: set[str])` — writes the set to JSON; removes the file and its parent directory when the set is empty (clean teardown).
+  - Added `_other_installed_share_section(root, name) -> bool` — reads the manifest and checks if any other installed platform shares the same `rules_file` + `rules_marker` as the named platform.
+  - Updated `install_platform()` to call `_write_manifest()` on every install (including idempotent re-installs) so the manifest always reflects current state. Manifest write is placed before the "already installed" early-return so even a second install of a platform is properly tracked.
+  - Updated `uninstall_platform()` to call `_other_installed_share_section(root, name)` before removing a shared rules section. If another platform still needs the section, removal is skipped with a `[yellow]` warning. The platform is always removed from the manifest regardless.
+
+  **`codegraph/tests/test_platforms.py`** — 5 new tests:
+  - `test_uninstall_one_agents_md_platform_preserves_section_for_others` — codex installed alongside aider; uninstalling codex preserves AGENTS.md section; return value does not include "AGENTS.md".
+  - `test_uninstall_all_agents_md_platforms_removes_section` — both platforms uninstalled; section removed; manifest file cleaned up.
+  - `test_manifest_written_on_install` — manifest created and contains platform name after first install.
+  - `test_manifest_cleaned_up_after_last_uninstall` — manifest file absent after last platform uninstalled.
+  - `test_uninstall_without_manifest_still_removes_section` — backwards compatibility: uninstall works correctly when no manifest exists (pre-manifest installs).
+
+  **Code review (2 issues found and fixed):**
+  - `[MISSING TEST]` `test_uninstall_one_agents_md_platform_preserves_section_for_others` didn't assert the return value — added assertion that `"AGENTS.md"` not in actions list.
+  - `[MISSING TEST]` `test_uninstall_all_agents_md_platforms_removes_section` didn't assert manifest cleanup — added `assert not manifest_path.exists()`.
+
+  - **Validation:** 802 tests pass (5 new), 11 skipped, 0 failures. Byte-compile clean. Arch-check: 4/4 policies pass (1 skipped).
 
 ### install — resolve all template variables in `codegraph install claude` (issue #256)
 
@@ -1399,15 +1425,15 @@ Beyond unit/integration tests, these were dogfooded against real systems:
 
 | Thing | Value |
 |---|---|
-| Current branch | `archon/task-fix-issue-256` |
+| Current branch | `archon/task-fix-issue-257` |
 | Base branch | `main` |
-| Unpushed commits | 1 (`ea07455` fix(install): resolve template variables in claude platform install — pending PR) |
+| Unpushed commits | 1 (`f321b8f` fix(install): preserve shared AGENTS.md sections during partial uninstall — pending PR) |
 | Open PR | None. |
-| Working tree | Clean (untracked: `.claude/plans/fix-install-template-vars.plan.md`) |
-| Test count | 797 passing + 11 skipped + 0 deselected |
+| Working tree | Clean (untracked: `.claude/plans/fix-shared-section-uninstall.plan.md`) |
+| Test count | 802 passing + 11 skipped + 0 deselected |
 | Test runtime | ~16 s |
 | Byte-compile | Clean |
-| Last editable install | After `ea07455`. Re-run `cd codegraph && .venv/bin/pip install -e ".[python,mcp,test,watch,analyze]"` after any `pyproject.toml` edit. |
+| Last editable install | After `f321b8f`. Re-run `cd codegraph && .venv/bin/pip install -e ".[python,mcp,test,watch,analyze]"` after any `pyproject.toml` edit. |
 | Wheel built? | Not yet for v0.1.95. Run `cd codegraph && .venv/bin/pip install build && python -m build` to produce wheel + sdist. |
 | New files | `codegraph/codegraph/platforms.py`, `codegraph/codegraph/templates/platforms/` (8 templates), `codegraph/tests/test_platforms.py` |
 
@@ -1702,6 +1728,7 @@ Repo-local plans under `.claude/plans/`:
 - `leiden-community-detection.plan.md` — shipped as `c8d4ad2` (closes #42).
 - `hyperedge-groups.plan.md` — shipped as `a6bcbe6` (closes #39).
 - `edge-confidence-labels.plan.md` — shipped as `248af58` (closes #38).
+- `fix-shared-section-uninstall.plan.md` — shipped as `f321b8f` (closes #257).
 
 Older plans (not in repo): `sunny-giggling-moon.md` (the MCP retriever batch), `framework-detector-port.md`. These live in `~/.claude/plans/` and get overwritten on each `/plan` session unless preserved manually.
 
