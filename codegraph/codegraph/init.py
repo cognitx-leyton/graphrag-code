@@ -136,6 +136,7 @@ class InitConfig:
     setup_neo4j: bool
     container_name: str
     install_hooks: bool = True
+    install_platforms: list[str] = field(default_factory=list)
     bolt_port: int = _DEFAULT_BOLT_PORT
     http_port: int = _DEFAULT_HTTP_PORT
     pipx_version: str = "0.2.0"
@@ -166,6 +167,7 @@ def _prompt_config(
             setup_neo4j=True,
             container_name=f"cognitx-codegraph-{repo_name}-{path_hash}",
             install_hooks=True,
+            install_platforms=["claude"],
             bolt_port=bolt_port if bolt_port is not None else _DEFAULT_BOLT_PORT,
             http_port=http_port if http_port is not None else _DEFAULT_HTTP_PORT,
             default_package_prefix=default_packages[0] + "/" if default_packages[0] != "." else "",
@@ -210,6 +212,17 @@ def _prompt_config(
         "Install git hooks (post-commit + post-checkout) for auto graph rebuild?",
         default=True,
     )
+    install_platforms_answer = Prompt.ask(
+        "Install for AI platforms (comma-separated, or 'all')",
+        default="claude",
+    )
+    if install_platforms_answer.strip().lower() == "all":
+        from .platforms import PLATFORMS
+        install_platforms = list(PLATFORMS.keys())
+    else:
+        install_platforms = [
+            p.strip() for p in install_platforms_answer.split(",") if p.strip()
+        ]
 
     return InitConfig(
         packages=packages,
@@ -219,6 +232,7 @@ def _prompt_config(
         setup_neo4j=setup_neo4j,
         container_name=f"cognitx-codegraph-{repo_name}-{path_hash}",
         install_hooks=install_hooks,
+        install_platforms=install_platforms,
         bolt_port=bolt_port if bolt_port is not None else _DEFAULT_BOLT_PORT,
         http_port=http_port if http_port is not None else _DEFAULT_HTTP_PORT,
         default_package_prefix=packages[0] + "/" if packages and packages[0] != "." else "",
@@ -515,6 +529,23 @@ def run_init(
             console.print(f"[bold]Git hooks:[/] {result}")
         except RuntimeError as exc:
             console.print(f"[yellow]Git hooks:[/] {exc}")
+
+    # Platform install — handles CLAUDE.md, AGENTS.md, hooks, etc.
+    effective_platforms = list(config.install_platforms)
+    if not effective_platforms and config.install_claude:
+        effective_platforms = ["claude"]
+    if effective_platforms:
+        from .platforms import install_platform
+        vars_ = _template_vars(config)
+        for platform_name in effective_platforms:
+            try:
+                result = install_platform(
+                    root, platform_name,
+                    template_vars=vars_, console=console,
+                )
+                console.print(f"[bold]{platform_name}:[/] {result}")
+            except Exception as exc:
+                console.print(f"[yellow]{platform_name}:[/] {exc}")
 
     if config.setup_neo4j and not skip_docker:
         if not _start_and_wait_for_neo4j(root, config, console):
