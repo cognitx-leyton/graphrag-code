@@ -2,14 +2,14 @@
 
 > **Purpose of this document.** Capture enough context for a fresh agent session (or a human returning after time away) to continue work on codegraph without re-deriving state from scratch. Separate from the user-facing roadmap bullets in `README.md`, which stay short and pitch-oriented.
 >
-> **Last updated:** 2026-04-24 after commits `09f9d8a` → `248af58` (feat(schema): add edge confidence labels to CALLS, IMPORTS, and resolver edges — closes #38; 738 tests passing, v0.1.92).
+> **Last updated:** 2026-04-25 after commits `09f9d8a` → `ff0b9e7` (feat(install): add multi-platform codegraph install command — closes #48; 796 tests passing, v0.1.95).
 
 ---
 
 ## TL;DR — where we are
 
-- **Branch:** `archon/task-fix-issue-38`. Edge confidence labels ship as `confidence` + `confidence_score` properties on every cross-file edge (`CALLS`, `IMPORTS`, and all resolver-emitted edges). `ResolveResult` namedtuple adds `.strategy` to resolution. `codegraph/docs/confidence.md` documents the taxonomy — closes issue #38. v0.1.92.
-- **Tests:** 738 passing (12 new: `test_confidence.py` + 2 in `test_loader_partitioning.py`), 11 skipped, 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
+- **Branch:** `archon/task-fix-issue-48-v2`. Multi-platform `codegraph install` / `codegraph uninstall` ships 14 platform integrations (claude, codex, opencode, cursor, gemini, copilot, vscode, aider, claw, droid, trae, kiro, antigravity, hermes). `codegraph init` now prompts for platform install. `platforms.py` registry + 8 rule templates. Closes issue #48. v0.1.95.
+- **Tests:** 796 passing (58 new: `test_platforms.py` + 2 fixed uninstall assertions + 1 `_remove_section` regression), 11 skipped, 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
 - **Graph indexed:** Twenty CRM is currently loaded into the local Neo4j container at `bolt://localhost:7688` (13,473 files, 2,559 classes, 6,088 methods, 5,562 CALLS, 6,708 hook usages, 4,593 RENDERS).
 - **MCP server:** 15 read-only tools (incl. new `describe_group`) + **2 write tools** (`wipe_graph`, `reindex_file`) gated by `--allow-write` flag + **29 prompt templates** (all Cypher blocks from `queries.md` auto-registered via `_register_query_prompts()`). `codegraph-mcp` console script registered. Smoke-tested via raw JSON-RPC.
 - **Package:** `cognitx-codegraph` v0.1.55 in `pyproject.toml`. Wheel + sdist build cleanly. **Not yet on PyPI** — needs one-time operational setup (Trusted Publisher registration). `release.yml` now waits for propagation and smoke-tests the published version.
@@ -24,16 +24,54 @@
 ## Shipped since the last roadmap update (commit `09f9d8a`)
 
 ```
-248af58  feat(schema): add edge confidence labels to CALLS, IMPORTS, and resolver edges (issue #38)
-906983c  feat(schema): add hyperedge EdgeGroup for protocol-implementer sets (issue #39)
-e0a172d  feat(analyze): add Leiden community detection and graph analysis (#42)
-9f42190  feat(benchmark): add token-reduction benchmark command (issue #43)
+ff0b9e7  feat(install): add multi-platform codegraph install command (issue #48)
+d2f08e4  feat(schema): add edge-level confidence labels to CALLS, IMPORTS, and resolver edges (#255)
+906983c  feat(schema): add hyperedge EdgeGroup for protocol-implementer sets (#254)
+e0a172d  feat(analyze): add Leiden community detection and graph analysis (#253)
+9f42190  feat(benchmark): add token-reduction benchmark command (#252)
 85b18f2  feat(export): add interactive HTML and GraphML graph export command (#251)
 343878b  feat(cache): prune stale cache entries after manifest save (#250)
 33ddbe7  feat(init): append .codegraph-cache/ to .gitignore on codegraph init (#249)
 c4571c6  feat(cache): SHA-256 content-addressed cache for incremental indexing (#46) (#248)
 3f394de  fix(test): add watchdog to test extra so test_watch.py tests pass
 ```
+
+### install — multi-platform codegraph install command (issue #48)
+
+- `ff0b9e7 feat(install)` — Eleven files created, three updated:
+
+  **New files:**
+
+  1. **`codegraph/codegraph/platforms.py`** (~380 LOC) — Platform registry + install/uninstall logic. `PlatformConfig` dataclass (fields: `name`, `hint_dirs`, `rules_file`, `template`, `hook_file`, `hook_type`, `section_marker`). 14 platform entries: `claude`, `codex`, `opencode`, `cursor`, `gemini`, `copilot`, `vscode`, `aider`, `claw`, `droid`, `trae`, `kiro`, `antigravity`, `hermes`. `_append_section(path, marker, content)` — idempotent section append (no-ops if marker already present). `_remove_section(path, marker)` — strips only the managed `## codegraph` section, preserves all other content, strips leading blank lines correctly. `install_platform(root, name)` / `uninstall_platform(root, name)` — dispatches per platform type: JSON hook injection (claude, gemini), AGENTS.md section (codex, opencode, aider, claw, droid, trae, hermes), `.mdc` rules file (cursor), standalone rules file (kiro, antigravity, vscode, copilot). `install_all(root)` — auto-detects active platforms via hint directories and installs all matching. `list_platforms()` — returns all 14 names.
+
+  2–9. **`codegraph/codegraph/templates/platforms/`** — 8 rule templates:
+     - `rules-agents.md` — shared AGENTS.md codegraph section (codex, opencode, aider, claw, droid, trae, hermes)
+     - `rules-gemini.md` — `GEMINI.md` section
+     - `rules-cursor.mdc` — `.cursor/rules/codegraph.mdc` (Cursor rule format)
+     - `rules-kiro.md` — `.kiro/steering/codegraph.md`
+     - `rules-antigravity.md` — `.antigravity/codegraph.md`
+     - `rules-antigravity-workflow.md` — `.antigravity/workflows/codegraph-query.md`
+     - `rules-vscode.md` — `.github/copilot-instructions.md` section
+     - `hook-opencode.js` — `.opencode/hooks/codegraph.js` JS hook
+
+  10. **`codegraph/tests/test_platforms.py`** (58 tests) — Covers install/uninstall for all 14 platforms, idempotency, `_remove_section` edge cases (codegraph first, codegraph last, codegraph before other section), `install_all` detection logic, hook content assertions, uninstall hook removal verification.
+
+  **Updated files:**
+
+  11. **`codegraph/codegraph/cli.py`** — Added `install_app` and `uninstall_app` Typer sub-apps. `install_app` exposes one command per platform (14 total) + `codegraph install --all` which calls `install_all()`. `uninstall_app` mirrors it. Both registered on the main `app`.
+
+  12. **`codegraph/codegraph/init.py`** — Added `install_platforms: list[str]` field to `InitConfig`. Non-interactive path defaults to `["claude"]` (backward compatible). Interactive path adds a platform selection prompt after the hooks step. `run_init()` calls `install_platform(root, name)` for each selected platform after `_scaffold_files()`.
+
+  13. **`codegraph/pyproject.toml`** — Added `"templates/**/*.mdc"` to `package_data` (`.md` and `.js` patterns already existed) so the Cursor `.mdc` template ships in the wheel.
+
+  **Code review (5 issues found and fixed):**
+  - `[BUG]` `_remove_section` left leading blank lines when codegraph was the first section → `.strip()` instead of `.rstrip()`.
+  - `[LINT]` Unused `field` import in `platforms.py:19` → removed.
+  - `[MISSING TEST]` `test_uninstall_claude_removes_section_and_hook` didn't verify `.claude/settings.json` hook removal → added assertion.
+  - `[MISSING TEST]` `test_uninstall_gemini_removes_section_and_hook` didn't verify `.gemini/settings.json` hook removal → added assertion.
+  - `[MISSING TEST]` No test for `_remove_section` when codegraph appears before another section → added `test_remove_section_codegraph_before_other_section`.
+
+  - **Validation:** 796 tests pass (58 new), 11 skipped, 0 failures. Byte-compile clean. Arch-check: 4/4 policies pass. `codegraph install --help` lists all 14 platforms + `--all` flag.
 
 ### schema — edge confidence labels on CALLS, IMPORTS, and resolver edges (issue #38)
 
@@ -1341,17 +1379,17 @@ Beyond unit/integration tests, these were dogfooded against real systems:
 
 | Thing | Value |
 |---|---|
-| Current branch | `archon/task-fix-issue-39` |
+| Current branch | `archon/task-fix-issue-48-v2` |
 | Base branch | `main` |
-| Unpushed commits | 1 (`a6bcbe6` feat(schema): add hyperedge EdgeGroup for protocol-implementer sets — pending PR) |
+| Unpushed commits | 1 (`ff0b9e7` feat(install): add multi-platform codegraph install command — pending PR) |
 | Open PR | None. |
-| Working tree | Clean (untracked: `.claude/plans/hyperedge-groups.plan.md`) |
-| Test count | 726 passing + 10 skipped + 0 deselected |
+| Working tree | Clean (untracked: `.claude/plans/multi-platform-install.plan.md`) |
+| Test count | 796 passing + 11 skipped + 0 deselected |
 | Test runtime | ~16 s |
 | Byte-compile | Clean |
-| Last editable install | After `a6bcbe6`. Re-run `cd codegraph && .venv/bin/pip install -e ".[python,mcp,test,watch,analyze]"` after any `pyproject.toml` edit. |
-| Wheel built? | Not yet for v0.1.92. Run `cd codegraph && .venv/bin/pip install build && python -m build` to produce wheel + sdist. |
-| New docs | `codegraph/docs/hyperedges.md` — EdgeGroup feature documentation. |
+| Last editable install | After `ff0b9e7`. Re-run `cd codegraph && .venv/bin/pip install -e ".[python,mcp,test,watch,analyze]"` after any `pyproject.toml` edit. |
+| Wheel built? | Not yet for v0.1.95. Run `cd codegraph && .venv/bin/pip install build && python -m build` to produce wheel + sdist. |
+| New files | `codegraph/codegraph/platforms.py`, `codegraph/codegraph/templates/platforms/` (8 templates), `codegraph/tests/test_platforms.py` |
 
 ---
 
