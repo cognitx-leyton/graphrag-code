@@ -20,6 +20,16 @@
 | `--force` | Overwrite existing scaffolded files. Does NOT overwrite `CLAUDE.md` — that's always appended safely. |
 | `--skip-docker` | Write `docker-compose.yml` but don't start the container. Useful when you're running Neo4j on another machine, or using a hosted instance like Neo4j Aura. |
 | `--skip-index` | Don't run the first `codegraph index` after scaffolding. Useful when the repo is too big to index on first try, or when you want to customize `.arch-policies.toml` before the first run. |
+| `--bolt-port <int>` | Override the default Neo4j Bolt port (default 7687). Stored in `docker-compose.yml` and propagated to all rendered templates (`CLAUDE.md`, `AGENTS.md`, etc.). Useful when running multiple codegraph-indexed repos side by side. |
+| `--http-port <int>` | Override the default Neo4j HTTP port (default 7474). Same propagation as `--bolt-port`. |
+
+## Custom Neo4j ports — running multiple repos side by side
+
+Each repo gets its own Neo4j container. The container name is derived from the repo directory name plus a SHA1 of the absolute path (`derive_container_name(root)`), so repos at different paths never collide — even if they share a directory name. Special characters in the directory name are sanitised.
+
+Pass `--bolt-port` / `--http-port` (or set `CODEGRAPH_NEO4J_BOLT_PORT` / `CODEGRAPH_NEO4J_HTTP_PORT`) to bind to ports other than the defaults. The chosen ports are baked into `docker-compose.yml`, `CLAUDE.md`, and any subsequently installed platform rules files (`AGENTS.md`, `GEMINI.md`, etc.).
+
+If init detects orphaned containers from an older naming scheme (pre-sanitisation), it prints a warning with the container names so you can clean them up manually.
 
 ## The prompts
 
@@ -46,9 +56,35 @@ Defaults (what `--yes` picks): all packages detected in step 2, zero cross-pairs
 | `.github/workflows/arch-check.yml` | if CI install = yes | `$PACKAGE_PATHS_FLAGS`, `$PIPX_VERSION` |
 | `.arch-policies.toml` | always | `$CROSS_PAIRS_TOML` |
 | `docker-compose.yml` | if Neo4j setup = yes | `$CONTAINER_NAME`, `$NEO4J_BOLT_PORT`, `$NEO4J_HTTP_PORT` |
-| `CLAUDE.md` | always (appended) | `$CONTAINER_NAME`, `$NEO4J_BOLT_PORT`, `$PACKAGE_PATHS_FLAGS` |
+| `CLAUDE.md` | always (appended) | `$CONTAINER_NAME`, `$NEO4J_BOLT_PORT`, `$NEO4J_HTTP_PORT`, `$PACKAGE_PATHS_FLAGS` |
+| `.codegraph-cache/` | added to `.gitignore` | — |
 
 Templates live in `codegraph/codegraph/templates/` and use `string.Template` syntax (stdlib, no Jinja dependency).
+
+The full set of template variables (defined in `init.build_template_vars()`):
+
+- `NEO4J_BOLT_PORT`, `NEO4J_HTTP_PORT` — chosen ports.
+- `CONTAINER_NAME` — derived via `derive_container_name(root)` (sanitised dir name + 8-char SHA1).
+- `PACKAGE_PATHS_FLAGS` — joined `-p packages/foo -p packages/bar` flags from `codegraph.toml`.
+- `DEFAULT_PACKAGE_PREFIX` — first package, used by the `/dead-code` slash command.
+- `CROSS_PAIRS_TOML` — cross-package policy block for `.arch-policies.toml`.
+- `PIPX_VERSION` — pinned codegraph version for the CI workflow.
+
+## Adding more AI platforms after init
+
+`codegraph init` defaults to installing only Claude Code. To wire codegraph into other agents, run `codegraph install <platform>`:
+
+```bash
+codegraph install codex          # writes AGENTS.md
+codegraph install cursor         # writes .cursor/rules/codegraph.mdc
+codegraph install gemini         # writes GEMINI.md
+codegraph install vscode         # writes .github/copilot-instructions.md
+codegraph install --all          # detects and installs every platform with a config dir
+```
+
+Supported platforms: `claude`, `codex`, `opencode`, `cursor`, `gemini`, `copilot`, `vscode`, `aider`, `claw`, `droid`, `trae`, `kiro`, `antigravity`, `hermes`.
+
+Installs are tracked in `.codegraph/platforms.json`. When you `codegraph uninstall <platform>`, shared rules sections (e.g. an `AGENTS.md` consumed by both Codex and Aider) are preserved if any other installed platform still depends on them. The platform is always removed from the manifest. If you uninstall the last platform sharing a section, the section is removed and the manifest file is cleaned up.
 
 ## Troubleshooting
 
@@ -58,7 +94,9 @@ Templates live in `codegraph/codegraph/templates/` and use `string.Template` syn
 
 **"Neo4j did not become ready in 90s"** — the container is taking longer than usual to pull the image (cold start). Run `docker compose logs neo4j` to check, then re-run `codegraph init` — it'll skip steps that already completed.
 
-**"Port 7687 busy"** — another Neo4j instance (or another service) is already on that port. Edit `docker-compose.yml` to map different host ports (e.g. `7690:7687`), then also update `CODEGRAPH_NEO4J_URI=bolt://localhost:7690` in your shell rc. Future versions of `codegraph init` will auto-detect and pick free ports.
+**"Port 7687 busy"** — another Neo4j instance (or another service) is already on that port. Re-run `codegraph init --bolt-port 7690 --http-port 7475 --force` to bind to free ports. The new ports are propagated to `docker-compose.yml`, `CLAUDE.md`, and any platform rules files installed afterwards.
+
+**"Orphaned containers from old naming scheme"** — earlier codegraph versions used a less robust container-name derivation. If init detects containers that look like leftovers, it prints them so you can `docker rm -f <name>` and reclaim the names.
 
 **CLAUDE.md already has a codegraph section** — init detects this (looks for the `## Using the codegraph knowledge graph` heading) and skips the append. Safe to re-run any number of times.
 

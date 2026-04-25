@@ -2,7 +2,26 @@
 
 > **Purpose of this document.** Capture enough context for a fresh agent session (or a human returning after time away) to continue work on codegraph without re-deriving state from scratch. Separate from the user-facing roadmap bullets in `README.md`, which stay short and pitch-oriented.
 >
-> **Last updated:** 2026-04-25 after commits `ea07455` → `f887f70` (refactor(install): deduplicate template-var logic into init.py — closes #259; 807 tests passing, v0.1.95).
+> **Last updated:** 2026-04-25 — comprehensive docs sweep on `hotfix` (README, init.md, claude-md-snippet, ROADMAP). v0.1.99.
+
+---
+
+## Docs sweep — 2026-04-25 (hotfix)
+
+Catch-up pass that synchronises all user-facing docs with the current codebase after ~250 closed issues. No code changes; docs only.
+
+**Updated files:**
+- `codegraph/README.md` — full rewrite from a 34-line stub to a complete CLI / MCP / schema / extras / platforms reference. Documents all 16 CLI subcommands (`init`, `index`, `query`, `validate`, `arch-check`, `wipe`, `stats`, `export`, `benchmark`, `report`, `watch`, `hook`, `install`, `uninstall`, `repl`), all 16 MCP tools incl. `describe_group` / `find_function` / `calls_from` / `callers_of` and the 2 write tools, all 14 install platforms, all 7 optional extras, the `--update` / `--since` incremental modes, edge confidence + `:EdgeGroup` hyperedges, links into `docs/` for deep dives.
+- `codegraph/docs/init.md` — adds `--bolt-port` / `--http-port` flags, custom-port section, container-name derivation (`derive_container_name(root)` = sanitised dir + 8-char SHA1), full template-var list (7 keys), `codegraph install <platform>` post-init wiring, manifest-aware uninstall that preserves shared `AGENTS.md` sections, orphaned-container warning, `.codegraph-cache/` auto-`.gitignore` entry.
+- `codegraph/codegraph/templates/claude-md-snippet.md` — adds auto-rebuild section (`hook install`, `watch`, `index --update`).
+- `ROADMAP.md` — this entry.
+
+**Verified accurate (no edits needed):**
+- `codegraph/docs/arch-policies.md` — already covers all 5 built-in policies, `[[suppress]]` syntax, scoping, exit codes, custom-policy authoring, and worked examples.
+- `codegraph/docs/confidence.md` — already documents `EXTRACTED` / `INFERRED` / `AMBIGUOUS` taxonomy with per-edge-kind tables and querying examples.
+- `codegraph/docs/hyperedges.md` — already covers `:EdgeGroup` / `:MEMBER_OF` model, both kinds (`protocol_implementers`, `community`), `describe_group` MCP tool, and the extension recipe.
+
+**Note on naming:** the `analyze.py` module ships Leiden community detection but is exposed as `codegraph report` on the CLI (no `codegraph analyze` subcommand). The `--no-analyze` flag on `codegraph index` controls whether `report` runs after indexing. README now says `codegraph report`.
 
 ---
 
