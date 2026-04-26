@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import dataclasses
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional
 
@@ -273,6 +274,53 @@ class DocumentSectionNode:
         return f"docsec:{self.repo}:{self.path}#{self.section_index}"
 
 
+def _slug(text: str) -> str:
+    """Collapse free-text into a safe ID fragment (no ``#``, ``:``, or spaces)."""
+    return re.sub(r"[^a-zA-Z0-9_.-]+", "_", text).strip("_").lower()
+
+
+@dataclass
+class ConceptNode:
+    name: str
+    description: str
+    source_file: str
+    extracted_by: str = "claude"
+    repo: str = "default"
+
+    @property
+    def id(self) -> str:
+        return f"concept:{self.repo}:{self.source_file}#{_slug(self.name)}"
+
+
+@dataclass
+class DecisionNode:
+    title: str
+    context: str
+    status: str
+    source_file: str
+    markdown_line: int = 0
+    extracted_by: str = "claude"
+    repo: str = "default"
+
+    @property
+    def id(self) -> str:
+        return f"decision:{self.repo}:{self.source_file}#{_slug(self.title)}"
+
+
+@dataclass
+class RationaleNode:
+    text: str
+    decision_title: str
+    source_file: str
+    rationale_index: int = 0
+    extracted_by: str = "claude"
+    repo: str = "default"
+
+    @property
+    def id(self) -> str:
+        return f"rationale:{self.repo}:{self.source_file}#{_slug(self.decision_title)}_{self.rationale_index}"
+
+
 # ── Edges ────────────────────────────────────────────────────
 
 @dataclass
@@ -348,6 +396,12 @@ MEMBER_OF         = "MEMBER_OF"
 # Phase 11 — documents
 HAS_SECTION           = "HAS_SECTION"
 REFERENCES_DOCUMENT   = "REFERENCES_DOCUMENT"
+
+# Phase 12 — semantic extraction
+DOCUMENTS_CONCEPT       = "DOCUMENTS_CONCEPT"
+DECIDES                 = "DECIDES"
+JUSTIFIES               = "JUSTIFIES"
+SEMANTICALLY_SIMILAR_TO = "SEMANTICALLY_SIMILAR_TO"
 
 
 # ── Test-file pairing conventions ────────────────────────────

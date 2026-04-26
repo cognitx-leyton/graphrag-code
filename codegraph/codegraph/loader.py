@@ -12,13 +12,17 @@ from .schema import (
     BELONGS_TO,
     CALLS,
     CALLS_ENDPOINT,
+    ConceptNode,
     CONTRIBUTED_BY,
+    DECIDES,
     DECLARES_CONTROLLER,
     DECORATED_BY,
+    DecisionNode,
     DEFINES_CLASS,
     DEFINES_FUNC,
     DEFINES_ATOM,
     DEFINES_IFACE,
+    DOCUMENTS_CONCEPT,
     DocumentNode,
     DocumentSectionNode,
     Edge,
@@ -38,6 +42,7 @@ from .schema import (
     IMPORTS_MODULE,
     IMPORTS_SYMBOL,
     INJECTS,
+    JUSTIFIES,
     LAST_MODIFIED_BY,
     MEMBER_OF,
     OWNED_BY,
@@ -46,6 +51,7 @@ from .schema import (
     PY_CONFTEST_FILENAME,
     PY_TEST_PREFIX,
     PY_TEST_SUFFIX_TRAILING,
+    RationaleNode,
     READS_ATOM,
     READS_ENV,
     RELATES_TO,
@@ -53,6 +59,7 @@ from .schema import (
     REPOSITORY_OF,
     RESOLVES,
     RETURNS,
+    SEMANTICALLY_SIMILAR_TO,
     TESTS,
     TESTS_CLASS,
     TS_TEST_SUFFIXES,
@@ -139,6 +146,9 @@ _CONSTRAINTS = [
     "CREATE CONSTRAINT edgegroup_id IF NOT EXISTS FOR (n:EdgeGroup) REQUIRE n.id IS UNIQUE",
     "CREATE CONSTRAINT document_id IF NOT EXISTS FOR (n:Document) REQUIRE n.id IS UNIQUE",
     "CREATE CONSTRAINT docsection_id IF NOT EXISTS FOR (n:DocumentSection) REQUIRE n.id IS UNIQUE",
+    "CREATE CONSTRAINT concept_id IF NOT EXISTS FOR (n:Concept) REQUIRE n.id IS UNIQUE",
+    "CREATE CONSTRAINT decision_id IF NOT EXISTS FOR (n:Decision) REQUIRE n.id IS UNIQUE",
+    "CREATE CONSTRAINT rationale_id IF NOT EXISTS FOR (n:Rationale) REQUIRE n.id IS UNIQUE",
 ]
 
 _INDEXES = [
@@ -155,6 +165,12 @@ _INDEXES = [
     "CREATE INDEX document_path IF NOT EXISTS FOR (n:Document) ON (n.path)",
     "CREATE INDEX document_file_type IF NOT EXISTS FOR (n:Document) ON (n.file_type)",
     "CREATE INDEX document_repo IF NOT EXISTS FOR (n:Document) ON (n.repo)",
+    "CREATE INDEX concept_name IF NOT EXISTS FOR (n:Concept) ON (n.name)",
+    "CREATE INDEX concept_source IF NOT EXISTS FOR (n:Concept) ON (n.source_file)",
+    "CREATE INDEX decision_title IF NOT EXISTS FOR (n:Decision) ON (n.title)",
+    "CREATE INDEX decision_source IF NOT EXISTS FOR (n:Decision) ON (n.source_file)",
+    "CREATE INDEX rationale_source IF NOT EXISTS FOR (n:Rationale) ON (n.source_file)",
+    "CREATE INDEX rationale_decision IF NOT EXISTS FOR (n:Rationale) ON (n.decision_title)",
 ]
 
 
@@ -176,6 +192,9 @@ class LoadStats:
     member_of_edges: int = 0
     documents: int = 0
     document_sections: int = 0
+    concepts: int = 0
+    decisions: int = 0
+    rationales: int = 0
     edges: dict = field(default_factory=dict)
 
 
@@ -226,6 +245,15 @@ class Neo4jLoader:
                 "DETACH DELETE p",
                 packages=packages, repo=repo,
             )
+            # Drop :Document, :DocumentSection, and semantic nodes (Concept,
+            # Decision, Rationale) scoped to this repo.  These don't hang off
+            # :File, so the file-subgraph cascade above doesn't reach them.
+            for label in ("Document", "DocumentSection",
+                          "Concept", "Decision", "Rationale"):
+                s.run(
+                    f"MATCH (n:{label}) WHERE n.repo = $repo DETACH DELETE n",
+                    repo=repo,
+                )
         return deleted
 
     def delete_file_subgraph(self, file_ids: list[str]) -> int:
@@ -278,6 +306,10 @@ class Neo4jLoader:
         repo_name: str = "default",
         documents: list[DocumentNode] | None = None,
         document_sections: list[DocumentSectionNode] | None = None,
+        concepts: list[ConceptNode] | None = None,
+        decisions: list[DecisionNode] | None = None,
+        rationales: list[RationaleNode] | None = None,
+        semantic_edges: list[Edge] | None = None,
     ) -> LoadStats:
         stats = LoadStats()
         files = [r.file for r in index.files_by_path.values()]
@@ -584,9 +616,19 @@ class Neo4jLoader:
             if edge_groups:
                 _write_edge_groups(s, edge_groups, all_edges, stats)
 
-            # ── Documents (Phase 11) ─────────────────────────────
+            # ── Documents (Phase 11) ───────────────────���─────────
             if documents:
                 _write_documents(s, documents, document_sections or [], stats)
+
+            # ���─ Semantic nodes (Phase 12) ────────────────────────
+            if concepts:
+                _write_concepts(s, concepts, stats)
+            if decisions:
+                _write_decisions(s, decisions, stats)
+            if rationales:
+                _write_rationales(s, rationales, stats)
+            if semantic_edges:
+                _write_semantic_edges(s, semantic_edges, stats)
 
         return stats
 
@@ -678,6 +720,112 @@ def _write_documents(
           for sec in sections])
     stats.document_sections = len(sections)
     stats.edges[HAS_SECTION] = len(sections)
+
+
+def _write_concepts(
+    session,
+    concepts: list[ConceptNode],
+    stats: LoadStats,
+) -> None:
+    """MERGE :Concept nodes."""
+    _run(session, """
+        UNWIND $rows AS r
+        MERGE (c:Concept {id: r.id})
+        SET c.name = r.name, c.description = r.description,
+            c.source_file = r.source_file,
+            c.extracted_by = r.extracted_by, c.repo = r.repo
+    """, [dict(id=c.id, name=c.name, description=c.description,
+               source_file=c.source_file, extracted_by=c.extracted_by,
+               repo=c.repo) for c in concepts])
+    stats.concepts = len(concepts)
+
+
+def _write_decisions(
+    session,
+    decisions: list[DecisionNode],
+    stats: LoadStats,
+) -> None:
+    """MERGE :Decision nodes."""
+    _run(session, """
+        UNWIND $rows AS r
+        MERGE (d:Decision {id: r.id})
+        SET d.title = r.title, d.context = r.context,
+            d.status = r.status, d.source_file = r.source_file,
+            d.markdown_line = r.markdown_line,
+            d.extracted_by = r.extracted_by, d.repo = r.repo
+    """, [dict(id=d.id, title=d.title, context=d.context,
+               status=d.status, source_file=d.source_file,
+               markdown_line=d.markdown_line,
+               extracted_by=d.extracted_by, repo=d.repo)
+          for d in decisions])
+    stats.decisions = len(decisions)
+
+
+def _write_rationales(
+    session,
+    rationales: list[RationaleNode],
+    stats: LoadStats,
+) -> None:
+    """MERGE :Rationale nodes."""
+    _run(session, """
+        UNWIND $rows AS r
+        MERGE (rt:Rationale {id: r.id})
+        SET rt.text = r.text, rt.decision_title = r.decision_title,
+            rt.source_file = r.source_file, rt.rationale_index = r.rationale_index,
+            rt.extracted_by = r.extracted_by, rt.repo = r.repo
+    """, [dict(id=r.id, text=r.text, decision_title=r.decision_title,
+               source_file=r.source_file, rationale_index=r.rationale_index,
+               extracted_by=r.extracted_by,
+               repo=r.repo) for r in rationales])
+    stats.rationales = len(rationales)
+
+
+_SEMANTIC_EDGE_LABELS: dict[str, tuple[str, str]] = {
+    DOCUMENTS_CONCEPT: ("Document", "Concept"),
+    DECIDES: ("Document", "Decision"),
+    JUSTIFIES: ("Rationale", "Decision"),
+}
+
+
+def _write_semantic_edges(
+    session,
+    semantic_edges: list[Edge],
+    stats: LoadStats,
+) -> None:
+    """Write semantic extraction edges (DOCUMENTS_CONCEPT, DECIDES, JUSTIFIES, etc.)."""
+    for kind in (DOCUMENTS_CONCEPT, DECIDES, JUSTIFIES, SEMANTICALLY_SIMILAR_TO):
+        bucket = [e for e in semantic_edges if e.kind == kind]
+        if not bucket:
+            continue
+        labels = _SEMANTIC_EDGE_LABELS.get(kind)
+        if labels:
+            src_label, dst_label = labels
+            query = f"""
+                UNWIND $rows AS r
+                MATCH (src:{src_label} {{id: r.src}})
+                MATCH (dst:{dst_label} {{id: r.dst}})
+                MERGE (src)-[rel:{kind}]->(dst)
+                SET rel.confidence = r.confidence,
+                    rel.confidence_score = r.confidence_score
+            """
+        else:
+            # Fallback for SEMANTICALLY_SIMILAR_TO or future edge types
+            # where src/dst labels vary.
+            query = f"""
+                UNWIND $rows AS r
+                MATCH (src {{id: r.src}})
+                MATCH (dst {{id: r.dst}})
+                MERGE (src)-[rel:{kind}]->(dst)
+                SET rel.confidence = r.confidence,
+                    rel.confidence_score = r.confidence_score
+            """
+        _run(session, query, [
+            dict(src=e.src_id, dst=e.dst_id,
+                 confidence=e.confidence,
+                 confidence_score=e.confidence_score)
+            for e in bucket
+        ])
+        stats.edges[kind] = stats.edges.get(kind, 0) + len(bucket)
 
 
 def _write_belongs_to(session, files, stats: LoadStats) -> None:
