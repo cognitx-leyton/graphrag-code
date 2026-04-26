@@ -133,8 +133,8 @@ def init(
     yes: bool = typer.Option(False, "--yes", "-y", help="Non-interactive; accept all defaults."),
     skip_docker: bool = typer.Option(False, "--skip-docker", help="Write compose file but don't start Neo4j."),
     skip_index: bool = typer.Option(False, "--skip-index", help="Don't run the initial index."),
-    bolt_port: Optional[int] = typer.Option(None, "--bolt-port", help="Neo4j Bolt port (default: 7687)."),
-    http_port: Optional[int] = typer.Option(None, "--http-port", help="Neo4j HTTP port (default: 7474)."),
+    bolt_port: Optional[int] = typer.Option(None, "--bolt-port", help="Neo4j Bolt port (default: 7688)."),
+    http_port: Optional[int] = typer.Option(None, "--http-port", help="Neo4j HTTP port (default: 7475)."),
 ) -> None:
     """Scaffold codegraph into the current repo — commands, CI gate, config, Neo4j, first index."""
     from .init import run_init

@@ -30,8 +30,8 @@ codegraph init [--force] [--yes/-y] [--skip-docker] [--skip-index] [--bolt-port 
 | `--yes`, `-y` | bool | false | Non-interactive; accept all defaults. |
 | `--skip-docker` | bool | false | Write the compose file but don't start Neo4j. |
 | `--skip-index` | bool | false | Don't run the initial index after scaffold. |
-| `--bolt-port` | int | 7687 | Neo4j Bolt port to write into the compose file. |
-| `--http-port` | int | 7474 | Neo4j HTTP port to write into the compose file. |
+| `--bolt-port` | int | 7688 | Neo4j Bolt host port (offset from Neo4j's stock 7687 to avoid colliding with a developer's own Neo4j). |
+| `--http-port` | int | 7475 | Neo4j HTTP host port (offset from Neo4j's stock 7474). |
 
 Full walkthrough — what gets written, port-collision handling, idempotency, repair mode — lives in **[init.md](./init.md)**.
 

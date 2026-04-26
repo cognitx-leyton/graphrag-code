@@ -178,8 +178,10 @@ def test_build_template_vars_all_keys():
     }
     assert vars_["PACKAGE_PATHS_FLAGS"] == "-p a"
     assert vars_["CONTAINER_NAME"] == "c"
-    assert vars_["NEO4J_BOLT_PORT"] == "7687"
-    assert vars_["NEO4J_HTTP_PORT"] == "7474"
+    # Defaults are offset from Neo4j stock 7687/7474 to avoid collisions and to
+    # match cli.py's DEFAULT_URI = bolt://localhost:7688.
+    assert vars_["NEO4J_BOLT_PORT"] == "7688"
+    assert vars_["NEO4J_HTTP_PORT"] == "7475"
 
 
 def test_build_template_vars_cross_pairs():

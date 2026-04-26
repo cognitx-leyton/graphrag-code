@@ -65,8 +65,15 @@ _TEMPLATES_ROOT = _pkg_files("codegraph") / "templates"
 # and reuses this container instead of creating per-repo isolates.
 SHARED_CONTAINER_NAME = "codegraph-neo4j"
 
-_DEFAULT_BOLT_PORT = 7687
-_DEFAULT_HTTP_PORT = 7474
+# Host-side ports for the codegraph-neo4j container.  Offset from Neo4j's
+# stock 7687/7474 to avoid collision with developers running their own
+# Neo4j instance on the standard ports.  The container-side ports stay
+# 7687/7474 (set by the Neo4j image and referenced in the compose
+# template's host:container mapping).  Aligned with cli.py's
+# DEFAULT_URI = bolt://localhost:7688 so `codegraph query` works without
+# CODEGRAPH_NEO4J_URI being set.
+_DEFAULT_BOLT_PORT = 7688
+_DEFAULT_HTTP_PORT = 7475
 _NEO4J_READY_TIMEOUT_SEC = 90
 _DOCKER_PROBE_TIMEOUT_SEC = 5
 

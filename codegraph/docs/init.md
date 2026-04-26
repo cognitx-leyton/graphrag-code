@@ -22,8 +22,8 @@
 | `--force` | Overwrite existing scaffolded files. Does NOT overwrite `CLAUDE.md` — that's always appended safely. |
 | `--skip-docker` | Write `docker-compose.yml` but don't start the container. Useful when you're running Neo4j on another machine, or using a hosted instance like Neo4j Aura. |
 | `--skip-index` | Don't run the first `codegraph index` after scaffolding. Useful when the repo is too big to index on first try, or when you want to customize `.arch-policies.toml` before the first run. |
-| `--bolt-port <int>` | Override the default Neo4j Bolt port (default 7687). Stored in `docker-compose.yml` and propagated to all rendered templates (`CLAUDE.md`, `AGENTS.md`, etc.). Useful when running multiple codegraph-indexed repos side by side. |
-| `--http-port <int>` | Override the default Neo4j HTTP port (default 7474). Same propagation as `--bolt-port`. |
+| `--bolt-port <int>` | Override the default Neo4j Bolt port (default 7688). Stored in `docker-compose.yml` and propagated to all rendered templates (`CLAUDE.md`, `AGENTS.md`, etc.). The default is offset from Neo4j's stock 7687 so codegraph doesn't collide with a developer's own Neo4j instance. |
+| `--http-port <int>` | Override the default Neo4j HTTP port (default 7475). Same propagation as `--bolt-port`. Offset from Neo4j's stock 7474 for the same reason. |
 
 ## Shared `codegraph-neo4j` container
 
@@ -50,7 +50,7 @@ The detection logic lives in [`codegraph/codegraph/docker_setup.py`](../codegrap
 
 ### Custom Neo4j ports
 
-Pass `--bolt-port` / `--http-port` (or set `CODEGRAPH_NEO4J_BOLT_PORT` / `CODEGRAPH_NEO4J_HTTP_PORT`) to bind to ports other than the defaults (7687 / 7474). The chosen ports are baked into `docker-compose.yml`, `CLAUDE.md`, and any subsequently installed platform rules files (`AGENTS.md`, `GEMINI.md`, etc.). When init reuses an existing container, it ignores these flags and uses the container's actual port mapping instead — so your env vars stay accurate.
+Pass `--bolt-port` / `--http-port` (or set `CODEGRAPH_NEO4J_BOLT_PORT` / `CODEGRAPH_NEO4J_HTTP_PORT`) to bind to ports other than the defaults (7688 / 7475 — offset from Neo4j's stock 7687 / 7474 to avoid colliding with a developer's own Neo4j instance). The chosen ports are baked into `docker-compose.yml`, `CLAUDE.md`, and any subsequently installed platform rules files (`AGENTS.md`, `GEMINI.md`, etc.). When init reuses an existing container, it ignores these flags and uses the container's actual port mapping instead — so your env vars stay accurate.
 
 ### Migrating from per-repo containers
 
@@ -135,7 +135,7 @@ Installs are tracked in `.codegraph/platforms.json`. When you `codegraph uninsta
 
 **"Neo4j did not become ready in 90s"** — usually a cold image pull on first run. `docker logs codegraph-neo4j` to see what's happening; re-run `codegraph init` once the container's healthy — it skips steps that already completed.
 
-**"Port 7687 (bolt) is already in use — and no codegraph-neo4j container owns it"** — something other than codegraph is holding the port. Find it with `lsof -i :7687` (or `ss -ltnp 'sport = :7687'`), then either stop it or re-run `codegraph init --bolt-port <free-port> --http-port <free-port>`.
+**"Port 7688 (bolt) is already in use — and no codegraph-neo4j container owns it"** — something other than codegraph is holding the port. Find it with `lsof -i :7688` (or `ss -ltnp 'sport = :7688'`), then either stop it or re-run `codegraph init --bolt-port <free-port> --http-port <free-port>`.
 
 **"Old per-repo containers left over"** — earlier codegraph versions created one container per repo (`cognitx-codegraph-<repo>-<8hex>`). They're orphans now. See [Migrating from per-repo containers](#migrating-from-per-repo-containers) for the cleanup commands.
 

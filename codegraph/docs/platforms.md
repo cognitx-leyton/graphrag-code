@@ -47,7 +47,7 @@ Sample of the `CLAUDE.md` section that gets written (variables resolved for a re
 ```markdown
 ## Using the codegraph knowledge graph
 
-This repo is indexed into a local Neo4j via **codegraph** (`pipx install cognitx-codegraph`). Run `codegraph init` if you haven't yet. The graph is reachable at `bolt://localhost:7687`. Claude Code has slash commands wired to it — use them.
+This repo is indexed into a local Neo4j via **codegraph** (`pipx install cognitx-codegraph`). Run `codegraph init` if you haven't yet. The graph is reachable at `bolt://localhost:7688`. Claude Code has slash commands wired to it — use them.
 
 ### `/graph <cypher>` — read-only Cypher queries
 …
@@ -136,10 +136,10 @@ Every template runs through `string.Template.safe_substitute` with the dict buil
 
 | Variable | Source | Example |
 |---|---|---|
-| `$NEO4J_BOLT_PORT` | `CODEGRAPH_NEO4J_BOLT_PORT` env var, else `7687` (the default in `init._DEFAULT_BOLT_PORT`). | `7687` |
-| `$NEO4J_HTTP_PORT` | `init._DEFAULT_HTTP_PORT`, currently always `7474`. Install does not currently override it from the environment. | `7474` |
+| `$NEO4J_BOLT_PORT` | `CODEGRAPH_NEO4J_BOLT_PORT` env var, else `7688` (the default in `init._DEFAULT_BOLT_PORT`, offset from Neo4j stock 7687). | `7688` |
+| `$NEO4J_HTTP_PORT` | `CODEGRAPH_NEO4J_HTTP_PORT` env var, else `7475` (the default in `init._DEFAULT_HTTP_PORT`, offset from Neo4j stock 7474). | `7475` |
 | `$PACKAGE_PATHS_FLAGS` | `" ".join(f"-p {p}" for p in config.packages)`. Empty string if no packages are configured. | `-p src/server -p src/web` |
-| `$CONTAINER_NAME` | `derive_container_name(root)` in `init.py`: `cognitx-codegraph-<sanitized-dir>-<8-hex-of-sha1(abspath)>`. Deterministic per absolute path, so two clones of the same repo in different directories get distinct container names. | `cognitx-codegraph-myapp-3a8f1d2c` |
+| `$CONTAINER_NAME` | `SHARED_CONTAINER_NAME` in `init.py` — fixed `codegraph-neo4j` so every repo on the machine indexes into one shared container. The legacy `derive_container_name(root)` is still exported for opt-in isolation. | `codegraph-neo4j` |
 | `$DEFAULT_PACKAGE_PREFIX` | First configured package + `/`, or empty string when the first package is `.`. Used in slash-command templates that grep within the primary package. | `src/server/` |
 | `$CROSS_PAIRS_TOML` | Cross-package boundary policy entries for `.arch-policies.toml`. Always empty during `install` (cross-pairs are gathered only by the interactive `init` flow); kept in the dict so templates that reference it don't break. | `""` |
 | `$PIPX_VERSION` | Hard-coded `"0.2.0"` in `_build_install_vars`. Used in CI workflow templates; not referenced by any platform rules file today. | `0.2.0` |
@@ -244,7 +244,7 @@ Most agents read these files at session start. Restart the agent after install. 
 Codegraph only writes inside the section bounded by the marker heading and the next `## ` heading. Anything above the marker stays intact, anything after the next sibling heading stays intact. To customise: edit between those bounds, but be aware that the next `codegraph install` (which is idempotent only when the marker is present and unchanged) will skip the file rather than overwriting your edits — re-running install does not re-render the section. To force a re-render, manually delete the section first.
 
 **"Container port already in use" / Bolt URL in the rules file is wrong.**
-The `$NEO4J_BOLT_PORT` baked into the rules file comes from `CODEGRAPH_NEO4J_BOLT_PORT` (env var) or `init._DEFAULT_BOLT_PORT` (currently `7687`). To bind to a different port, re-run `codegraph init --bolt-port 7690 --http-port 7475 --force` first; the new port is then propagated to subsequent `install` runs. For an already-installed platform, manually delete the codegraph section and re-run `codegraph install <platform>`.
+The `$NEO4J_BOLT_PORT` baked into the rules file comes from `CODEGRAPH_NEO4J_BOLT_PORT` (env var) or `init._DEFAULT_BOLT_PORT` (currently `7688`). To bind to a different port, re-run `codegraph init --bolt-port 7690 --http-port 7476 --force` first; the new port is then propagated to subsequent `install` runs. For an already-installed platform, manually delete the codegraph section and re-run `codegraph install <platform>`.
 
 **"Manifest is out of sync with disk."**
 If you hand-edited `CLAUDE.md` to remove the section but the manifest still lists `claude`, run `codegraph install claude` to re-write the section, then `codegraph uninstall claude` to remove both the section and the manifest entry. There is no `codegraph install --reset` today.
