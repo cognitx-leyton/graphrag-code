@@ -767,7 +767,7 @@ def _run_index(
 
     # ── Audio/video transcription (opt-in) ─────────────────────
     if extract_audio:
-        from .schema import DocumentNode as _DocNode
+        from .schema import DocumentNode as _DocNode, Edge as _Edge, TRANSCRIBED_FROM as _TRANSCRIBED_FROM
         from .transcribe import (
             transcribe as _transcribe,
             load_model as _load_model,
@@ -827,6 +827,13 @@ def _run_index(
                         _put_cached_transcript(repo, fhash, text)
                         audio_cache_misses += 1
                     doc_nodes.append(doc)
+                    semantic_edge_list.append(_Edge(
+                        kind=_TRANSCRIBED_FROM,
+                        src_id=doc.id,
+                        dst_id=f"file:{effective_repo_name}:{rel}",
+                        confidence="EXTRACTED",
+                        confidence_score=1.0,
+                    ))
                     audio_count += 1
         say(
             f"[bold green]✓[/] transcribed {audio_count} media file(s) "
