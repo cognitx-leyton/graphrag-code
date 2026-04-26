@@ -1258,8 +1258,8 @@ def test_reindex_file_structural_edges_not_doubled(monkeypatch, tmp_path):
 
 
 def test_reindex_file_file_level_exposes_edge(monkeypatch, tmp_path):
-    """File-level endpoints (controller_class='file:<path>') get EXPOSES edges
-    written via MATCH (f:File {path: ...}), not MATCH (c:Class ...)."""
+    """File-level endpoints (controller_class='file:<repo>:<path>') get EXPOSES edges
+    written via MATCH (f:File {id: ...}), not MATCH (c:Class ...)."""
     monkeypatch.setattr(mcp_mod, "_allow_write", True)
 
     py_file = tmp_path / "app.py"
