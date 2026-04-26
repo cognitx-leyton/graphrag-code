@@ -63,7 +63,6 @@ from .schema import (
     SEMANTICALLY_SIMILAR_TO,
     TESTS,
     TESTS_CLASS,
-    TRANSCRIBED_FROM,
     TS_TEST_SUFFIXES,
     USES_HOOK,
     USES_OPERATION,
@@ -787,9 +786,7 @@ _SEMANTIC_EDGE_LABELS: dict[str, tuple[str, str]] = {
     DECIDES: ("Document", "Decision"),
     JUSTIFIES: ("Rationale", "Decision"),
     ILLUSTRATES_CONCEPT: ("Document", "Concept"),
-    TRANSCRIBED_FROM: ("Document", "File"),
 }
-
 
 def _write_semantic_edges(
     session,
@@ -797,7 +794,7 @@ def _write_semantic_edges(
     stats: LoadStats,
 ) -> None:
     """Write semantic extraction edges (DOCUMENTS_CONCEPT, DECIDES, JUSTIFIES, etc.)."""
-    for kind in (DOCUMENTS_CONCEPT, DECIDES, JUSTIFIES, ILLUSTRATES_CONCEPT, SEMANTICALLY_SIMILAR_TO, TRANSCRIBED_FROM):
+    for kind in (DOCUMENTS_CONCEPT, DECIDES, JUSTIFIES, ILLUSTRATES_CONCEPT, SEMANTICALLY_SIMILAR_TO):
         bucket = [e for e in semantic_edges if e.kind == kind]
         if not bucket:
             continue
