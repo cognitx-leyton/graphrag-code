@@ -721,10 +721,10 @@ def _run_index(
                 "Set it or add it to .env."
             )
         from .schema import ILLUSTRATES_CONCEPT
-        from .semantic_extract import SemanticCache as _VisionSemanticCache
+        from .semantic_extract import SemanticCache
         from .vision_extract import extract_vision, _file_content_hash, _vision_cache_key
         say("[bold]Running vision extraction…")
-        vis_cache = _VisionSemanticCache(repo)
+        vis_cache = SemanticCache(repo)
         img_docs = [d for d in doc_nodes if d.file_type == "image"]
         vis_hits = vis_misses = 0
         for img_doc in img_docs:
