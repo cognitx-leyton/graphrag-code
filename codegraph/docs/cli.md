@@ -68,6 +68,7 @@ Index a TypeScript / Python codebase into Neo4j.
 ```bash
 codegraph index REPO [-p PACKAGE]... [--no-wipe] [--update | --since REF]
                      [--ignore-file PATH] [--skip-ownership] [--max-files N]
+                     [--extract-docs] [--extract-markdown]
                      [--no-export] [--no-benchmark] [--no-analyze]
                      [--uri URI --user USER --password PASS] [--json]
 ```
@@ -90,6 +91,9 @@ codegraph index REPO [-p PACKAGE]... [--no-wipe] [--update | --since REF]
 | `--no-export` | bool | false | Skip auto HTML/JSON export after indexing. |
 | `--no-benchmark` | bool | false | Skip auto token-reduction benchmark after indexing. |
 | `--no-analyze` | bool | false | Skip auto Leiden community detection + `GRAPH_REPORT.md`. |
+| `--extract-docs` | bool | false | Extract PDF and Markdown files as `:Document` / `:DocumentSection` nodes. Requires the `[docs]` extra for PDFs. |
+| `--extract-markdown` | bool | false | Run Claude API semantic extraction on Markdown files (concepts, decisions, rationale). Implies `--extract-docs`. Requires the `[semantic]` extra and `ANTHROPIC_API_KEY` env var. |
+| `--repo-name` | str | dir name | Namespace for multi-repo indexing. Prevents node ID collisions when indexing multiple repos into one Neo4j. |
 | `--uri`, `--user`, `--password` | str | env defaults | Neo4j connection. |
 | `--json` | bool | false | Emit stats as JSON; suppress Rich tables. |
 

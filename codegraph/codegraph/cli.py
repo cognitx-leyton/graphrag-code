@@ -211,6 +211,11 @@ def index(
         False, "--extract-docs",
         help="Extract PDF documents as :Document/:DocumentSection nodes.",
     ),
+    extract_markdown: bool = typer.Option(
+        False, "--extract-markdown",
+        help="Extract semantic concepts/decisions from markdown via Claude API. "
+             "Requires the [semantic] extra and ANTHROPIC_API_KEY env var.",
+    ),
 ) -> None:
     """Index a TypeScript monorepo into Neo4j."""
     try:
@@ -229,6 +234,7 @@ def index(
             update=update,
             repo_name=repo_name,
             extract_docs=extract_docs,
+            extract_markdown=extract_markdown,
         )
     except ConfigError as e:
         _emit_error(as_json, "config", str(e))
@@ -332,6 +338,7 @@ def _run_index(
     update: bool = False,
     repo_name: Optional[str] = None,
     extract_docs: bool = False,
+    extract_markdown: bool = False,
 ) -> dict[str, Any]:
     """Core indexing routine. Returns a flat dict of stats (files, edges, ...).
 
@@ -351,6 +358,11 @@ def _run_index(
     if ":" in effective_repo_name or "#" in effective_repo_name:
         raise ConfigError("--repo-name must not contain ':' or '#' (they break node ID parsing)")
     say(f"[bold]Repo name[/] {effective_repo_name}")
+
+    # --extract-markdown implies --extract-docs (we need the structural
+    # markdown docs parsed before the semantic pass can run over them).
+    if extract_markdown:
+        extract_docs = True
 
     # ── Incremental mode setup ──────────────────────────────────
     if since is not None and update:
@@ -574,7 +586,7 @@ def _run_index(
     doc_nodes: list = []
     doc_section_nodes: list = []
     if extract_docs:
-        from .doc_parser import extract_pdf
+        from .doc_parser import extract_markdown as _extract_md, extract_pdf
         say("[bold]Extracting documents…")
         pdf_count = 0
         for pkg in pkg_configs:
@@ -593,7 +605,75 @@ def _run_index(
                     pdf_count += 1
                 except Exception as exc:
                     say(f"  [yellow]skip[/] {rel}: {exc}")
-        say(f"[bold green]✓[/] extracted {pdf_count} PDF(s), {len(doc_section_nodes)} section(s)")
+        md_count = 0
+        for pkg in pkg_configs:
+            for p in pkg.root.rglob("*.md"):
+                if not p.is_file():
+                    continue
+                if any(part in exclude_dirs for part in p.parts):
+                    continue
+                rel = str(p.resolve().relative_to(repo)).replace("\\", "/")
+                if ignore_filter is not None and ignore_filter.should_ignore_file(rel):
+                    continue
+                try:
+                    doc, sections = _extract_md(p, rel, repo_name=effective_repo_name)
+                    doc_nodes.append(doc)
+                    doc_section_nodes.extend(sections)
+                    md_count += 1
+                except Exception as exc:
+                    say(f"  [yellow]skip[/] {rel}: {exc}")
+        say(
+            f"[bold green]✓[/] extracted {pdf_count} PDF(s) + {md_count} markdown file(s), "
+            f"{len(doc_section_nodes)} section(s)"
+        )
+
+    # ── Semantic extraction (opt-in) ─────────────────────────
+    concept_nodes: list = []
+    decision_nodes: list = []
+    rationale_nodes: list = []
+    semantic_edge_list: list = []
+    if extract_markdown:
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+        if not api_key:
+            raise ConfigError(
+                "--extract-markdown requires ANTHROPIC_API_KEY in the environment. "
+                "Set it or add it to .env."
+            )
+        from .semantic_extract import SemanticCache, extract_semantic
+        say("[bold]Running semantic extraction…")
+        sem_cache = SemanticCache(repo)
+        md_docs = [d for d in doc_nodes if d.file_type == "markdown"]
+        sem_hits = sem_misses = 0
+        for md_doc in md_docs:
+            md_path = repo / md_doc.path
+            if not md_path.is_file():
+                continue
+            try:
+                content = md_path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            cache_key = SemanticCache.cache_key(content, md_doc.path, effective_repo_name)
+            cached = sem_cache.get(cache_key)
+            if cached is not None:
+                result = cached
+                sem_hits += 1
+            else:
+                try:
+                    result = extract_semantic(content, md_doc.path, repo_name=effective_repo_name)
+                except Exception as exc:
+                    say(f"  [yellow]skip[/] {md_doc.path}: {exc}")
+                    continue
+                sem_cache.put(cache_key, result)
+                sem_misses += 1
+            concept_nodes.extend(result.concepts)
+            decision_nodes.extend(result.decisions)
+            rationale_nodes.extend(result.rationales)
+            semantic_edge_list.extend(result.edges)
+        say(
+            f"[bold green]✓[/] semantic: {len(concept_nodes)} concepts, "
+            f"{len(decision_nodes)} decisions, {len(rationale_nodes)} rationales "
+            f"(cache: {sem_hits} hit, {sem_misses} miss)"
+        )
 
     say(f"[bold]Connecting to Neo4j…[/] {uri}")
     loader = Neo4jLoader(uri, user, password)
@@ -633,6 +713,10 @@ def _run_index(
             repo_name=effective_repo_name,
             documents=doc_nodes or None,
             document_sections=doc_section_nodes or None,
+            concepts=concept_nodes or None,
+            decisions=decision_nodes or None,
+            rationales=rationale_nodes or None,
+            semantic_edges=semantic_edge_list or None,
         )
         say(f"[bold green]✓[/] loaded in {time.time()-t0:.1f}s")
     finally:
@@ -650,6 +734,7 @@ def _flatten_load_stats(stats, *, total_imports: int, unresolved_imports: int) -
         "files", "classes", "functions", "methods", "interfaces", "endpoints",
         "gql_operations", "columns", "atoms", "externals",
         "documents", "document_sections",
+        "concepts", "decisions", "rationales",
     ):
         out[k] = int(getattr(stats, k, 0))
     edges = getattr(stats, "edges", {}) or {}
@@ -664,6 +749,7 @@ def _print_load_stats_dict(stats: dict[str, Any]) -> None:
         "files", "classes", "functions", "methods", "interfaces", "endpoints",
         "gql_operations", "columns", "atoms", "externals",
         "documents", "document_sections",
+        "concepts", "decisions", "rationales",
     ):
         t.add_row(k, str(stats.get(k, 0)))
     for k, v in sorted(stats.get("edges", {}).items()):
