@@ -788,7 +788,6 @@ _SEMANTIC_EDGE_LABELS: dict[str, tuple[str, str]] = {
     ILLUSTRATES_CONCEPT: ("Document", "Concept"),
 }
 
-
 def _write_semantic_edges(
     session,
     semantic_edges: list[Edge],
