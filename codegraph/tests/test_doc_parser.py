@@ -78,6 +78,13 @@ def test_extract_pdf_extracted_at_is_iso():
     assert dt.year >= 2025
 
 
+def test_extract_pdf_size_guard(tmp_path):
+    big = tmp_path / "big.pdf"
+    big.write_bytes(b"\x00" * (50_000_001))
+    with pytest.raises(ValueError, match="exceeds 50 MB"):
+        extract_pdf(big, "big.pdf")
+
+
 def test_extract_pdf_section_paths_match_doc():
     doc, sections = extract_pdf(FIXTURE, "docs/sample.pdf")
     for sec in sections:
