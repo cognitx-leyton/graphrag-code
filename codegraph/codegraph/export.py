@@ -143,6 +143,13 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; background: #1a1a2e; colo
 .legend-item { display: flex; align-items: center; margin-bottom: 4px; cursor: pointer; font-size: 13px; }
 .legend-color { width: 14px; height: 14px; border-radius: 3px; margin-right: 8px; flex-shrink: 0; }
 .legend-item.hidden { opacity: 0.35; text-decoration: line-through; }
+#communities { padding: 8px 16px; border-bottom: 1px solid #0f3460; }
+#communities:empty { display: none; }
+#communities h3 { font-size: 14px; margin-bottom: 8px; }
+.community-item { display: flex; align-items: center; margin-bottom: 4px; cursor: pointer; font-size: 13px; }
+.community-item input { margin-right: 6px; }
+.community-color { width: 14px; height: 14px; border-radius: 3px; margin-right: 8px; flex-shrink: 0; }
+.community-item.hidden { opacity: 0.35; text-decoration: line-through; }
 #info-panel { padding: 16px; flex: 1; overflow-y: auto; font-size: 13px; }
 #info-panel h3 { margin-bottom: 8px; }
 .prop-row { margin-bottom: 4px; }
@@ -152,11 +159,17 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; background: #1a1a2e; colo
 """
 
 
-def _html_script(nodes_json: str, edges_json: str, legend_json: str) -> str:
+def _html_script(
+    nodes_json: str,
+    edges_json: str,
+    legend_json: str,
+    community_json: str,
+) -> str:
     return (
         "var nodesArray = " + nodes_json + ";\n"
         "var edgesArray = " + edges_json + ";\n"
         "var legendData = " + legend_json + ";\n"
+        "var communityData = " + community_json + ";\n"
         """
 var nodes = new vis.DataSet(nodesArray);
 var edges = new vis.DataSet(edgesArray);
@@ -174,12 +187,16 @@ var options = {
 };
 var network = new vis.Network(container, data, options);
 
-// Search
+function escapeHtml(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function stripDiacritics(s) { return s.normalize('NFD').replace(/[\\u0300-\\u036f]/g, ''); }
+
+// Search (diacritic-insensitive)
 document.getElementById('search').addEventListener('input', function(e) {
-    var q = e.target.value.toLowerCase();
+    var q = stripDiacritics(e.target.value.toLowerCase());
     if (!q) { nodes.forEach(function(n) { nodes.update({id: n.id, hidden: false}); }); return; }
     nodes.forEach(function(n) {
-        var match = (n.label || '').toLowerCase().indexOf(q) >= 0 || (n.title || '').toLowerCase().indexOf(q) >= 0;
+        var match = stripDiacritics((n.label || '').toLowerCase()).indexOf(q) >= 0
+                 || stripDiacritics((n.title || '').toLowerCase()).indexOf(q) >= 0;
         nodes.update({id: n.id, hidden: !match});
     });
 });
@@ -218,7 +235,75 @@ document.querySelectorAll('.legend-item').forEach(function(el) {
     });
 });
 
-function escapeHtml(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+// Community toggle
+var hiddenCommunities = {};
+document.querySelectorAll('.community-item input').forEach(function(cb) {
+    cb.addEventListener('change', function() {
+        var cid = cb.dataset.community;
+        hiddenCommunities[cid] = !cb.checked;
+        cb.parentElement.classList.toggle('hidden', !cb.checked);
+        nodes.forEach(function(n) {
+            if (n._communityId === cid) {
+                nodes.update({id: n.id, hidden: !cb.checked});
+            }
+        });
+    });
+});
+
+// Convex hull (Graham scan)
+function convexHull(points) {
+    if (points.length < 3) return points.slice();
+    points.sort(function(a, b) { return a.x - b.x || a.y - b.y; });
+    var lower = [];
+    for (var i = 0; i < points.length; i++) {
+        while (lower.length >= 2 && cross(lower[lower.length-2], lower[lower.length-1], points[i]) <= 0) lower.pop();
+        lower.push(points[i]);
+    }
+    var upper = [];
+    for (var i = points.length - 1; i >= 0; i--) {
+        while (upper.length >= 2 && cross(upper[upper.length-2], upper[upper.length-1], points[i]) <= 0) upper.pop();
+        upper.push(points[i]);
+    }
+    upper.pop(); lower.pop();
+    return lower.concat(upper);
+}
+function cross(O, A, B) { return (A.x - O.x) * (B.y - O.y) - (A.y - O.y) * (B.x - O.x); }
+
+// Draw community hulls
+if (communityData.length > 0) {
+    network.on('afterDrawing', function(ctx) {
+        var positions = network.getPositions();
+        communityData.forEach(function(comm) {
+            if (hiddenCommunities[comm.id]) return;
+            var pts = [];
+            nodes.forEach(function(n) {
+                if (n._communityId === comm.id && !n.hidden && positions[n.id]) {
+                    var p = positions[n.id];
+                    pts.push({x: p.x, y: p.y});
+                }
+            });
+            if (pts.length < 3) return;
+            var hull = convexHull(pts);
+            var cx = 0, cy = 0;
+            hull.forEach(function(p) { cx += p.x; cy += p.y; });
+            cx /= hull.length; cy /= hull.length;
+            var padded = hull.map(function(p) {
+                var dx = p.x - cx, dy = p.y - cy;
+                var d = Math.sqrt(dx*dx + dy*dy) || 1;
+                return {x: p.x + dx/d * 20, y: p.y + dy/d * 20};
+            });
+            ctx.beginPath();
+            ctx.moveTo(padded[0].x, padded[0].y);
+            for (var i = 1; i < padded.length; i++) ctx.lineTo(padded[i].x, padded[i].y);
+            ctx.closePath();
+            ctx.fillStyle = comm.color.replace('hsl', 'hsla').replace(')', ', 0.12)');
+            ctx.fill();
+            ctx.strokeStyle = comm.color.replace('hsl', 'hsla').replace(')', ', 0.3)');
+            ctx.lineWidth = 1;
+            ctx.stroke();
+        });
+    });
+}
 """
     )
 
@@ -243,17 +328,51 @@ def to_html(
             f"export to JSON/GraphML instead."
         )
 
-    # Compute degree for sizing
-    degree: dict[str, int] = {}
+    # Partition: separate EdgeGroup community nodes and MEMBER_OF edges
+    regular_nodes: list[dict] = []
+    community_nodes: list[dict] = []
+    for n in nodes:
+        if "EdgeGroup" in n.get("labels", []):
+            community_nodes.append(n)
+        else:
+            regular_nodes.append(n)
+
+    regular_edges: list[dict] = []
+    member_edges: list[dict] = []
     for e in edges:
+        if e["type"] == "MEMBER_OF":
+            member_edges.append(e)
+        else:
+            regular_edges.append(e)
+
+    # Build community structures
+    n_comms = len(community_nodes)
+    community_map: dict[str, dict] = {}
+    for i, cn in enumerate(community_nodes):
+        props = cn.get("properties", {})
+        color = f"hsl({i * 360 // n_comms if n_comms else 0}, 60%, 45%)"
+        community_map[cn["id"]] = {
+            "label": props.get("label", cn["id"]),
+            "kind": props.get("kind", "community"),
+            "node_count": props.get("node_count", 0),
+            "color": color,
+        }
+
+    node_to_community: dict[str, str] = {}
+    for me in member_edges:
+        node_to_community[me["src"]] = me["dst"]
+
+    # Compute degree for sizing (regular edges only)
+    degree: dict[str, int] = {}
+    for e in regular_edges:
         degree[e["src"]] = degree.get(e["src"], 0) + 1
         degree[e["dst"]] = degree.get(e["dst"], 0) + 1
     max_deg = max(degree.values()) if degree else 1
 
-    # Build vis nodes
+    # Build vis nodes (regular only — EdgeGroup nodes are not rendered)
     vis_nodes: list[dict] = []
     label_counts: dict[str, int] = {}
-    for n in nodes:
+    for n in regular_nodes:
         labels = n.get("labels", [])
         primary = labels[0] if labels else "Unknown"
         label_counts[primary] = label_counts.get(primary, 0) + 1
@@ -271,11 +390,12 @@ def to_html(
             "font": {"size": 12 if deg > max_deg * 0.3 else 0},
             "_labels": labels,
             "_props": {k: str(v) for k, v in props.items()},
+            "_communityId": node_to_community.get(n["id"]),
         })
 
-    # Build vis edges
+    # Build vis edges (regular only — MEMBER_OF edges are not rendered)
     vis_edges: list[dict] = []
-    for e in edges:
+    for e in regular_edges:
         vis_edges.append({
             "from": e["src"],
             "to": e["dst"],
@@ -287,6 +407,17 @@ def to_html(
     for lbl, count in sorted(label_counts.items(), key=lambda x: -x[1]):
         color = LABEL_COLORS.get(lbl, _DEFAULT_COLOR)
         legend_data.append({"label": lbl, "count": count, "color": color["background"]})
+
+    # Build community data for JS
+    community_data: list[dict] = []
+    for cid, cinfo in community_map.items():
+        member_count = sum(1 for v in node_to_community.values() if v == cid)
+        community_data.append({
+            "id": cid,
+            "label": cinfo["label"],
+            "color": cinfo["color"],
+            "memberCount": member_count,
+        })
 
     # Read vendored vis.js
     vis_js = (_pkg_files("codegraph") / "templates" / "vis-network.min.js").read_text()
@@ -301,10 +432,24 @@ def to_html(
         )
     legend_html = "\n".join(legend_html_parts)
 
+    # Build community sidebar HTML
+    community_html = ""
+    if community_data:
+        comm_parts: list[str] = ["<h3>Communities</h3>"]
+        for cd in community_data:
+            comm_parts.append(
+                f'<label class="community-item" data-community="{html.escape(cd["id"])}">'
+                f'<input type="checkbox" checked data-community="{html.escape(cd["id"])}">'
+                f'<span class="community-color" style="background:{html.escape(cd["color"])}"></span>'
+                f'{html.escape(cd["label"])} ({cd["memberCount"]})</label>'
+            )
+        community_html = "\n".join(comm_parts)
+
     nodes_json = _js_safe(vis_nodes)
     edges_json = _js_safe(vis_edges)
     legend_json_str = _js_safe(legend_data)
-    script = _html_script(nodes_json, edges_json, legend_json_str)
+    community_json = _js_safe(community_data)
+    script = _html_script(nodes_json, edges_json, legend_json_str, community_json)
     styles = _html_styles()
 
     page = (
@@ -317,9 +462,10 @@ def to_html(
         "</head>\n<body>\n"
         '<div id="sidebar">\n'
         "  <h2>codegraph</h2>\n"
-        f'  <div id="stats">{len(nodes)} nodes, {len(edges)} edges</div>\n'
+        f'  <div id="stats">{len(regular_nodes)} nodes, {len(regular_edges)} edges</div>\n'
         '  <div id="search-box"><input id="search" placeholder="Search nodes\u2026" type="text"></div>\n'
         f'  <div id="legend"><h3>Labels</h3>\n{legend_html}\n  </div>\n'
+        f'  <div id="communities">{community_html}</div>\n'
         '  <div id="info-panel"><em>Click a node to inspect</em></div>\n'
         "</div>\n"
         '<div id="graph"></div>\n'

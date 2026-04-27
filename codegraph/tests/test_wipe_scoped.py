@@ -58,18 +58,17 @@ def test_wipe_scoped_no_matching_files_drops_packages(loader_with_fake_driver):
     loader, session = loader_with_fake_driver
 
     # First session.run() returns an empty paths list (no files matched).
-    # Second session.run() drops the orphaned :Package nodes.
+    # Subsequent calls (Package cleanup + Document/Concept/... cleanup) also return empty.
     session.run.return_value = iter([])
 
     deleted = loader.wipe_scoped(["nonexistent_pkg"])
 
     assert deleted == 0
-    # Two run() calls: the SELECT and the Package cleanup.
+    # Multiple run() calls: SELECT + Package cleanup + label-scoped cleanups.
     assert session.run.call_count >= 1
-    # The last call should be the :Package cleanup.
-    last_cypher = session.run.call_args_list[-1].args[0]
-    assert "MATCH (p:Package)" in last_cypher
-    assert "DETACH DELETE p" in last_cypher
+    # One of the calls should be the :Package cleanup.
+    all_cyphers = [c.args[0] for c in session.run.call_args_list]
+    assert any("MATCH (p:Package)" in cy and "DETACH DELETE p" in cy for cy in all_cyphers)
 
 
 def test_wipe_scoped_collects_paths_and_delegates(monkeypatch, loader_with_fake_driver):
@@ -77,10 +76,12 @@ def test_wipe_scoped_collects_paths_and_delegates(monkeypatch, loader_with_fake_
     loader, session = loader_with_fake_driver
 
     paths = ["packages/server/src/a.ts", "packages/server/src/b.ts"]
-    session.run.side_effect = [
-        iter([_FakeRecord(path=p) for p in paths]),
-        iter([]),  # Package cleanup
-    ]
+    file_ids = [f"file:default:{p}" for p in paths]
+    # First call returns file IDs, remaining calls (Package + label cleanups) return empty.
+    session.run.side_effect = (
+        [iter([_FakeRecord(id=fid) for fid in file_ids])]
+        + [iter([])] * 10  # Package + Document/DocumentSection/Concept/Decision/Rationale
+    )
 
     delegate_calls: list[list[str]] = []
     monkeypatch.setattr(
@@ -90,7 +91,7 @@ def test_wipe_scoped_collects_paths_and_delegates(monkeypatch, loader_with_fake_
 
     deleted = loader.wipe_scoped(["server"])
     assert deleted == 2
-    assert delegate_calls == [paths]
+    assert delegate_calls == [file_ids]
 
 
 def test_wipe_scoped_select_uses_in_clause(loader_with_fake_driver):
@@ -110,10 +111,11 @@ def test_wipe_scoped_drops_packages_after_delete(monkeypatch, loader_with_fake_d
     """After deleting files, the :Package nodes for those names are also removed."""
     loader, session = loader_with_fake_driver
 
-    session.run.side_effect = [
-        iter([_FakeRecord(path="x.ts")]),
-        iter([]),
-    ]
+    # First call returns file IDs, remaining calls (Package + label cleanups) return empty.
+    session.run.side_effect = (
+        [iter([_FakeRecord(id="file:default:x.ts")])]
+        + [iter([])] * 10
+    )
     monkeypatch.setattr(
         loader_module.Neo4jLoader, "delete_file_subgraph",
         lambda self, p: 1,
@@ -121,7 +123,8 @@ def test_wipe_scoped_drops_packages_after_delete(monkeypatch, loader_with_fake_d
 
     loader.wipe_scoped(["pkg-a", "pkg-b"])
 
-    # Last session.run() is the Package cleanup with the original package names.
-    last_call = session.run.call_args_list[-1]
-    assert "p.name IN $packages" in last_call.args[0]
-    assert last_call.kwargs.get("packages") == ["pkg-a", "pkg-b"]
+    # One of the session.run() calls is the Package cleanup with the original package names.
+    all_calls = session.run.call_args_list
+    pkg_calls = [c for c in all_calls if "p.name IN $packages" in c.args[0]]
+    assert len(pkg_calls) == 1
+    assert pkg_calls[0].kwargs.get("packages") == ["pkg-a", "pkg-b"]

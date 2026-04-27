@@ -30,6 +30,7 @@ from .framework import FrameworkDetector
 from .ignore import IgnoreConfigError, IgnoreFilter
 from .loader import LoadStats, Neo4jLoader
 from .ownership import collect_ownership
+from .parse_validator import validate_cross_file_edges, validate_parse_result
 from .parser import TsParser
 from .resolver import (
     Index,
@@ -146,6 +147,42 @@ def init(
     ))
 
 
+# ── clone ──────────────────────────────────────────────────────────────
+
+@app.command()
+def clone(
+    url: str = typer.Argument(..., help="GitHub HTTPS or SSH URL to clone and index."),
+    packages: Optional[list[str]] = typer.Option(
+        None,
+        "--package", "-p",
+        help="Repo-relative path of a package to index (overrides auto-detect). Repeatable.",
+    ),
+    uri: str = typer.Option(DEFAULT_URI, "--uri", help="Neo4j Bolt URI."),
+    user: str = typer.Option(DEFAULT_USER, "--user", help="Neo4j user."),
+    password: str = typer.Option(DEFAULT_PASS, "--password", help="Neo4j password."),
+    full_clone: bool = typer.Option(False, "--full-clone", help="Full git history (enables ownership data)."),
+    as_json: bool = typer.Option(False, "--json", help="Emit stats as JSON on stdout."),
+    no_export: bool = typer.Option(False, "--no-export", help="Skip HTML/JSON export after indexing."),
+    no_benchmark: bool = typer.Option(False, "--no-benchmark", help="Skip token-reduction benchmark after indexing."),
+    no_analyze: bool = typer.Option(False, "--no-analyze", help="Skip Leiden community detection + GRAPH_REPORT after indexing."),
+) -> None:
+    """Clone a GitHub repo, cache it locally, and auto-index into Neo4j."""
+    from .clone import run_clone as _run_clone
+    raise typer.Exit(code=_run_clone(
+        url,
+        packages=packages,
+        uri=uri,
+        user=user,
+        password=password,
+        full_clone=full_clone,
+        as_json=as_json,
+        no_export=no_export,
+        no_benchmark=no_benchmark,
+        no_analyze=no_analyze,
+        console=console,
+    ))
+
+
 # ── repl (explicit) ──────────────────────────────────────────────────
 
 @app.command()
@@ -201,6 +238,36 @@ def index(
                                       help="Skip token-reduction benchmark after indexing."),
     no_analyze: bool = typer.Option(False, "--no-analyze",
                                     help="Skip Leiden community detection + GRAPH_REPORT after indexing."),
+    repo_name: Optional[str] = typer.Option(
+        None, "--repo-name",
+        help="Namespace for multi-repo indexing. Defaults to the repo "
+             "directory name. Prevents File-node collisions when indexing "
+             "multiple repos into one Neo4j with --no-wipe.",
+    ),
+    extract_docs: bool = typer.Option(
+        False, "--extract-docs",
+        help="Extract PDF documents as :Document/:DocumentSection nodes.",
+    ),
+    extract_markdown: bool = typer.Option(
+        False, "--extract-markdown",
+        help="Extract semantic concepts/decisions from markdown via Claude API. "
+             "Requires the [semantic] extra and ANTHROPIC_API_KEY env var.",
+    ),
+    extract_images: bool = typer.Option(
+        False, "--extract-images",
+        help="Extract image content (diagrams, screenshots) via Claude vision API. "
+             "Requires the [semantic] extra and ANTHROPIC_API_KEY env var.",
+    ),
+    extract_audio: bool = typer.Option(
+        False, "--extract-audio",
+        help="Transcribe audio/video files via Whisper. "
+             "Requires the [transcribe] extra.",
+    ),
+    strict_validate: bool = typer.Option(
+        False, "--strict-validate",
+        help="Fail the run if any parse-result validation errors are found "
+             "(malformed nodes/edges). Default: log warnings and continue.",
+    ),
 ) -> None:
     """Index a TypeScript monorepo into Neo4j."""
     try:
@@ -217,6 +284,12 @@ def index(
             quiet=as_json,
             since=since,
             update=update,
+            repo_name=repo_name,
+            extract_docs=extract_docs,
+            extract_markdown=extract_markdown,
+            extract_images=extract_images,
+            extract_audio=extract_audio,
+            strict_validate=strict_validate,
         )
     except ConfigError as e:
         _emit_error(as_json, "config", str(e))
@@ -318,6 +391,12 @@ def _run_index(
     quiet: bool = False,
     since: Optional[str] = None,
     update: bool = False,
+    repo_name: Optional[str] = None,
+    extract_docs: bool = False,
+    extract_markdown: bool = False,
+    extract_images: bool = False,
+    extract_audio: bool = False,
+    strict_validate: bool = False,
 ) -> dict[str, Any]:
     """Core indexing routine. Returns a flat dict of stats (files, edges, ...).
 
@@ -331,6 +410,21 @@ def _run_index(
     def say(msg: str) -> None:
         if not quiet:
             console.print(msg)
+
+    # ── Repo name derivation ───────────────────────────────────
+    effective_repo_name = repo_name or repo.resolve().name
+    if ":" in effective_repo_name or "#" in effective_repo_name:
+        raise ConfigError("--repo-name must not contain ':' or '#' (they break node ID parsing)")
+    say(f"[bold]Repo name[/] {effective_repo_name}")
+
+    # --extract-markdown implies --extract-docs (we need the structural
+    # markdown docs parsed before the semantic pass can run over them).
+    if extract_markdown:
+        extract_docs = True
+    if extract_images:
+        extract_docs = True
+    if extract_audio:
+        extract_docs = True
 
     # ── Incremental mode setup ──────────────────────────────────
     if since is not None and update:
@@ -406,6 +500,7 @@ def _run_index(
         if pkg_config.language == "ts":
             info = FrameworkDetector(pkg_dir).detect()
             pkg_node = PackageNode.from_framework_info(pkg_config.name, info)
+            pkg_node.repo = effective_repo_name
             index_obj.packages.append(pkg_node)
             version_str = f" v{info.version}" if info.version else ""
             say(
@@ -418,6 +513,7 @@ def _run_index(
             # :Package node so the BELONGS_TO edges still wire up in the graph.
             pkg_node = PackageNode(
                 name=pkg_config.name, framework="Unknown", confidence=0.0,
+                repo=effective_repo_name,
             )
             index_obj.packages.append(pkg_node)
             say(f"    [cyan]framework[/] Unknown (python; detection in Stage 2)")
@@ -464,6 +560,7 @@ def _run_index(
     progress_step = max(1, len(to_parse) // 20)
     new_manifest: dict[str, str] = {}
     cache_hits = 0
+    all_validation_errors: list[str] = []
     for i, (abs_p, rel, pkg_name, is_test) in enumerate(to_parse):
         # Cache check
         if ast_cache is not None:
@@ -479,11 +576,22 @@ def _run_index(
             if py_parser is None:
                 from .py_parser import PyParser
                 py_parser = PyParser()
-            result = py_parser.parse_file(abs_p, rel, pkg_name, is_test=is_test)
+            result = py_parser.parse_file(abs_p, rel, pkg_name, is_test=is_test,
+                                              repo_name=effective_repo_name)
         else:
-            result = ts_parser.parse_file(abs_p, rel, pkg_name, is_test=is_test)
+            result = ts_parser.parse_file(abs_p, rel, pkg_name, is_test=is_test,
+                                           repo_name=effective_repo_name)
         if result is None:
             continue
+        # Pre-load validation
+        file_errors = validate_parse_result(result)
+        if file_errors:
+            if strict_validate:
+                all_validation_errors.extend(f"{rel}: {e}" for e in file_errors)
+            else:
+                say(f"[yellow]  validation: {rel}: {len(file_errors)} error(s)[/]")
+                for e in file_errors:
+                    say(f"[yellow]    - {e}[/]")
         index_obj.add(result)
         if ast_cache is not None:
             ast_cache.put(rel, content_hash, result)
@@ -509,7 +617,7 @@ def _run_index(
     parse_time = time.time() - t0
     say(f"[bold green]✓[/] parsed {len(index_obj.files_by_path)} files in {parse_time:.1f}s")
 
-    _extract_routes(repo, index_obj, ignore_filter)
+    _extract_routes(repo, index_obj, ignore_filter, repo_name=effective_repo_name)
 
     if ignore_filter is not None:
         dropped = _strip_ignored_components(index_obj, ignore_filter)
@@ -531,6 +639,22 @@ def _run_index(
             f"unresolved={unresolved_imports} ({pct:.1f}% resolved)  [{time.time()-t0:.1f}s]"
         )
 
+    # Cross-file edge validation
+    xfile_errors = validate_cross_file_edges(all_edges, index_obj)
+    if xfile_errors:
+        if strict_validate:
+            all_validation_errors.extend(f"cross-file: {e}" for e in xfile_errors)
+        else:
+            say(f"[yellow]  validation: cross-file edges: {len(xfile_errors)} error(s)[/]")
+            for e in xfile_errors:
+                say(f"[yellow]    - {e}[/]")
+
+    if strict_validate and all_validation_errors:
+        raise ConfigError(
+            f"--strict-validate: {len(all_validation_errors)} validation error(s) — "
+            f"aborting before Neo4j write"
+        )
+
     for r in index_obj.files_by_path.values():
         all_edges.extend(r.edges)
 
@@ -546,6 +670,239 @@ def _run_index(
                 f"teams={len(ownership['teams'])}  [{time.time()-t0:.1f}s]"
             )
 
+    # ── Document extraction (opt-in) ──────────────────────────
+    doc_nodes: list = []
+    doc_section_nodes: list = []
+    if extract_docs:
+        from .doc_parser import extract_markdown as _extract_md, extract_pdf
+        say("[bold]Extracting documents…")
+        pdf_count = 0
+        for pkg in pkg_configs:
+            for p in pkg.root.rglob("*.pdf"):
+                if not p.is_file():
+                    continue
+                if any(part in exclude_dirs for part in p.parts):
+                    continue
+                rel = str(p.resolve().relative_to(repo)).replace("\\", "/")
+                if ignore_filter is not None and ignore_filter.should_ignore_file(rel):
+                    continue
+                try:
+                    doc, sections = extract_pdf(p, rel, repo_name=effective_repo_name)
+                    doc_nodes.append(doc)
+                    doc_section_nodes.extend(sections)
+                    pdf_count += 1
+                except Exception as exc:
+                    say(f"  [yellow]skip[/] {rel}: {exc}")
+        md_count = 0
+        for pkg in pkg_configs:
+            for p in pkg.root.rglob("*.md"):
+                if not p.is_file():
+                    continue
+                if any(part in exclude_dirs for part in p.parts):
+                    continue
+                rel = str(p.resolve().relative_to(repo)).replace("\\", "/")
+                if ignore_filter is not None and ignore_filter.should_ignore_file(rel):
+                    continue
+                try:
+                    doc, sections = _extract_md(p, rel, repo_name=effective_repo_name)
+                    doc_nodes.append(doc)
+                    doc_section_nodes.extend(sections)
+                    md_count += 1
+                except Exception as exc:
+                    say(f"  [yellow]skip[/] {rel}: {exc}")
+        img_count = 0
+        if extract_images:
+            from .schema import DocumentNode
+            from .vision_extract import IMAGE_EXTENSIONS, _MAX_IMAGE_SIZE
+            from datetime import datetime, timezone
+            for pkg in pkg_configs:
+                for ext in IMAGE_EXTENSIONS:
+                    for p in pkg.root.rglob(f"*{ext}"):
+                        if not p.is_file():
+                            continue
+                        if any(part in exclude_dirs for part in p.parts):
+                            continue
+                        rel = str(p.resolve().relative_to(repo)).replace("\\", "/")
+                        if ignore_filter is not None and ignore_filter.should_ignore_file(rel):
+                            continue
+                        fsize = p.stat().st_size
+                        if fsize > _MAX_IMAGE_SIZE:
+                            say(f"  [yellow]skip[/] {rel}: exceeds 20 MB size limit")
+                            continue
+                        doc_nodes.append(DocumentNode(
+                            path=rel,
+                            file_type="image",
+                            loc=fsize,
+                            extracted_at=datetime.now(timezone.utc).isoformat(),
+                            repo=effective_repo_name,
+                        ))
+                        img_count += 1
+        img_msg = f" + {img_count} image(s)" if img_count else ""
+        say(
+            f"[bold green]✓[/] extracted {pdf_count} PDF(s) + {md_count} markdown file(s)"
+            f"{img_msg}, {len(doc_section_nodes)} section(s)"
+        )
+
+    # ── Semantic extraction (opt-in) ─────────────────────────
+    concept_nodes: list = []
+    decision_nodes: list = []
+    rationale_nodes: list = []
+    semantic_edge_list: list = []
+    if extract_markdown:
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+        if not api_key:
+            raise ConfigError(
+                "--extract-markdown requires ANTHROPIC_API_KEY in the environment. "
+                "Set it or add it to .env."
+            )
+        from .semantic_extract import SemanticCache, extract_semantic
+        say("[bold]Running semantic extraction…")
+        sem_cache = SemanticCache(repo)
+        md_docs = [d for d in doc_nodes if d.file_type == "markdown"]
+        sem_hits = sem_misses = 0
+        for md_doc in md_docs:
+            md_path = repo / md_doc.path
+            if not md_path.is_file():
+                continue
+            try:
+                content = md_path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            cache_key = SemanticCache.cache_key(content, md_doc.path, effective_repo_name)
+            cached = sem_cache.get(cache_key)
+            if cached is not None:
+                result = cached
+                sem_hits += 1
+            else:
+                try:
+                    result = extract_semantic(content, md_doc.path, repo_name=effective_repo_name)
+                except Exception as exc:
+                    say(f"  [yellow]skip[/] {md_doc.path}: {exc}")
+                    continue
+                sem_cache.put(cache_key, result)
+                sem_misses += 1
+            concept_nodes.extend(result.concepts)
+            decision_nodes.extend(result.decisions)
+            rationale_nodes.extend(result.rationales)
+            semantic_edge_list.extend(result.edges)
+        say(
+            f"[bold green]✓[/] semantic: {len(concept_nodes)} concepts, "
+            f"{len(decision_nodes)} decisions, {len(rationale_nodes)} rationales "
+            f"(cache: {sem_hits} hit, {sem_misses} miss)"
+        )
+
+    # ── Vision extraction (opt-in) ─────────────────────────────
+    if extract_images:
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+        if not api_key:
+            raise ConfigError(
+                "--extract-images requires ANTHROPIC_API_KEY in the environment. "
+                "Set it or add it to .env."
+            )
+        from .schema import ILLUSTRATES_CONCEPT
+        from .semantic_extract import SemanticCache
+        from .vision_extract import extract_vision, _file_content_hash, _vision_cache_key
+        say("[bold]Running vision extraction…")
+        vis_cache = SemanticCache(repo)
+        img_docs = [d for d in doc_nodes if d.file_type == "image"]
+        vis_hits = vis_misses = 0
+        for img_doc in img_docs:
+            img_path = repo / img_doc.path
+            if not img_path.is_file():
+                continue
+            try:
+                fhash = _file_content_hash(img_path)
+            except OSError:
+                continue
+            cache_key = _vision_cache_key(fhash, img_doc.path, effective_repo_name)
+            cached = vis_cache.get(cache_key)
+            if cached is not None:
+                result = cached
+                vis_hits += 1
+            else:
+                try:
+                    result = extract_vision(img_path, img_doc.path, repo_name=effective_repo_name)
+                except Exception as exc:
+                    say(f"  [yellow]skip[/] {img_doc.path}: {exc}")
+                    continue
+                vis_cache.put(cache_key, result)
+                vis_misses += 1
+            concept_nodes.extend(result.concepts)
+            semantic_edge_list.extend(result.edges)
+        say(
+            f"[bold green]✓[/] vision: {len([d for d in doc_nodes if d.file_type == 'image'])} image(s), "
+            f"{sum(1 for e in semantic_edge_list if e.kind == ILLUSTRATES_CONCEPT)} concept edges "
+            f"(cache: {vis_hits} hit, {vis_misses} miss)"
+        )
+
+    # ── Audio/video transcription (opt-in) ─────────────────────
+    if extract_audio:
+        from .schema import DocumentNode as _DocNode
+        from .transcribe import (
+            transcribe as _transcribe,
+            load_model as _load_model,
+            MEDIA_EXTENSIONS,
+            _MAX_MEDIA_SIZE,
+            _file_content_hash as _audio_hash,
+            _get_cached_transcript,
+            _put_cached_transcript,
+        )
+        from datetime import datetime as _dt, timezone as _tz
+        say("[bold]Transcribing audio/video…")
+        try:
+            whisper_model = _load_model()
+        except ImportError as exc:
+            raise ConfigError(str(exc))
+        audio_count = 0
+        audio_cache_hits = audio_cache_misses = 0
+        for pkg in pkg_configs:
+            for ext in MEDIA_EXTENSIONS:
+                for p in pkg.root.rglob(f"*{ext}"):
+                    if not p.is_file():
+                        continue
+                    if any(part in exclude_dirs for part in p.parts):
+                        continue
+                    rel = str(p.resolve().relative_to(repo)).replace("\\", "/")
+                    if ignore_filter is not None and ignore_filter.should_ignore_file(rel):
+                        continue
+                    fsize = p.stat().st_size
+                    if fsize > _MAX_MEDIA_SIZE:
+                        say(f"  [yellow]skip[/] {rel}: exceeds 500 MB size limit")
+                        continue
+                    # Cache check
+                    try:
+                        fhash = _audio_hash(p)
+                    except OSError:
+                        continue
+                    cached_text = _get_cached_transcript(repo, fhash)
+                    if cached_text is not None:
+                        text = cached_text
+                        audio_cache_hits += 1
+                        doc = _DocNode(
+                            path=rel,
+                            file_type="transcript",
+                            loc=len(text),
+                            extracted_at=_dt.now(_tz.utc).isoformat(),
+                            repo=effective_repo_name,
+                        )
+                    else:
+                        try:
+                            doc, text = _transcribe(
+                                p, rel, repo_name=effective_repo_name,
+                                model=whisper_model,
+                            )
+                        except Exception as exc:
+                            say(f"  [yellow]skip[/] {rel}: {exc}")
+                            continue
+                        _put_cached_transcript(repo, fhash, text)
+                        audio_cache_misses += 1
+                    doc_nodes.append(doc)
+                    audio_count += 1
+        say(
+            f"[bold green]✓[/] transcribed {audio_count} media file(s) "
+            f"(cache: {audio_cache_hits} hit, {audio_cache_misses} miss)"
+        )
+
     say(f"[bold]Connecting to Neo4j…[/] {uri}")
     loader = Neo4jLoader(uri, user, password)
     try:
@@ -557,7 +914,7 @@ def _run_index(
             scoped_packages = [p.name for p in pkg_configs]
             if scoped_packages:
                 say(f"[yellow]Wiping {len(scoped_packages)} package(s) from database…[/]")
-                deleted = loader.wipe_scoped(scoped_packages)
+                deleted = loader.wipe_scoped(scoped_packages, repo=effective_repo_name)
                 say(f"  cleared {deleted} file subgraph(s)")
             else:
                 # No packages resolved — fall back to the global wipe so the
@@ -571,7 +928,8 @@ def _run_index(
             cleanup_paths = list((changed_files | deleted_files))
             if cleanup_paths:
                 t0 = time.time()
-                loader.delete_file_subgraph(cleanup_paths)
+                cleanup_ids = [f"file:{effective_repo_name}:{p}" for p in cleanup_paths]
+                loader.delete_file_subgraph(cleanup_ids)
                 say(f"[yellow]Cleaned subgraph for {len(cleanup_paths)} files[/]  [{time.time()-t0:.1f}s]")
         t0 = time.time()
         ls = loader.load(
@@ -580,6 +938,13 @@ def _run_index(
             ownership=ownership,
             touched_files=changed_files,
             edge_groups=edge_groups,
+            repo_name=effective_repo_name,
+            documents=doc_nodes or None,
+            document_sections=doc_section_nodes or None,
+            concepts=concept_nodes or None,
+            decisions=decision_nodes or None,
+            rationales=rationale_nodes or None,
+            semantic_edges=semantic_edge_list or None,
         )
         say(f"[bold green]✓[/] loaded in {time.time()-t0:.1f}s")
     finally:
@@ -596,6 +961,8 @@ def _flatten_load_stats(stats, *, total_imports: int, unresolved_imports: int) -
     for k in (
         "files", "classes", "functions", "methods", "interfaces", "endpoints",
         "gql_operations", "columns", "atoms", "externals",
+        "documents", "document_sections",
+        "concepts", "decisions", "rationales",
     ):
         out[k] = int(getattr(stats, k, 0))
     edges = getattr(stats, "edges", {}) or {}
@@ -609,6 +976,8 @@ def _print_load_stats_dict(stats: dict[str, Any]) -> None:
     for k in (
         "files", "classes", "functions", "methods", "interfaces", "endpoints",
         "gql_operations", "columns", "atoms", "externals",
+        "documents", "document_sections",
+        "concepts", "decisions", "rationales",
     ):
         t.add_row(k, str(stats.get(k, 0)))
     for k, v in sorted(stats.get("edges", {}).items()):
@@ -771,6 +1140,7 @@ def _extract_routes(
     repo: Path,
     index_obj: Index,
     ignore_filter: Optional[IgnoreFilter] = None,
+    repo_name: str = "default",
 ) -> None:
     """Best-effort ``<Route path="…" element={<X/>}/>`` detection."""
     for rel, result in index_obj.files_by_path.items():
@@ -789,7 +1159,7 @@ def _extract_routes(
             path, comp = m.group(1), m.group(2)
             if ignore_filter is not None and ignore_filter.should_ignore_route(path):
                 continue
-            result.routes.append(RouteNode(path=path, component_name=comp, file=rel))
+            result.routes.append(RouteNode(path=path, component_name=comp, file=rel, repo=repo_name))
 
 
 def _strip_ignored_components(index_obj: Index, ignore_filter: IgnoreFilter) -> int:
@@ -1561,6 +1931,10 @@ def watch(
     uri: str = DEFAULT_URI,
     user: str = DEFAULT_USER,
     password: str = DEFAULT_PASS,
+    repo_name: Optional[str] = typer.Option(
+        None, "--repo-name",
+        help="Repository namespace (default: folder name).",
+    ),
 ) -> None:
     """Watch for file changes and rebuild the graph incrementally."""
     from .watch import run_watch
@@ -1569,6 +1943,7 @@ def watch(
         debounce=debounce,
         packages=packages,
         uri=uri, user=user, password=password,
+        repo_name=repo_name,
     ))
 
 

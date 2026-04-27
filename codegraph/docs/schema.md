@@ -42,6 +42,11 @@ The loader installs these on first run (`init_schema()`):
 | `:Route` | `id` | — |
 | `:Package` | `name` | — |
 | `:EdgeGroup` | `id` | `kind` |
+| `:Document` | `id` | `path`, `file_type`, `repo` |
+| `:DocumentSection` | `id` | — |
+| `:Concept` | `id` | `name`, `source_file` |
+| `:Decision` | `id` | `title`, `source_file` |
+| `:Rationale` | `id` | — |
 
 Use these in your `WHERE` clauses for fast lookups — `WHERE c.name = 'Foo'` hits the `class_name` index; `WHERE c.id = 'class:src/foo.ts#Foo'` hits the unique constraint. Avoid `WHERE c.file CONTAINS '...'` on hot paths; full string scans are linear.
 
@@ -49,7 +54,7 @@ Use these in your `WHERE` clauses for fast lookups — `WHERE c.name = 'Foo'` hi
 
 ## 2. Node catalogue
 
-15 first-class node types plus the `:EdgeGroup` hyperedge intermediary. Specialised stacked labels (`:Component`, `:Controller`, `:Entity`, `:Module`, `:Resolver`, `:TestFile`) are not separate node types — they're conditional add-ons over `:Class` / `:Function` / `:File`.
+20 first-class node types plus the `:EdgeGroup` hyperedge intermediary. Specialised stacked labels (`:Component`, `:Controller`, `:Entity`, `:Module`, `:Resolver`, `:TestFile`) are not separate node types — they're conditional add-ons over `:Class` / `:Function` / `:File`.
 
 ### 2.1 `PackageNode` → `:Package`
 
@@ -445,6 +450,126 @@ RETURN x.specifier, count(*) AS uses ORDER BY uses DESC LIMIT 20
 
 **Emitted by**: `resolver.link_cross_file()` for protocol implementers; `analyze.persist_communities()` for Leiden communities.
 
+### 2.16 `DocumentNode` → `:Document`
+
+**Purpose**: a non-code document (PDF, Markdown) extracted by `--extract-docs`. One node per file.
+
+**Properties**:
+
+| Name | Type | Description |
+|---|---|---|
+| `id` | string | `doc:<repo>:<path>`. Unique. |
+| `path` | string | Repo-relative path. |
+| `file_type` | string | `"pdf"` or `"markdown"`. |
+| `loc` | int | Character count of extracted text. |
+| `extracted_at` | string | ISO 8601 timestamp of extraction. |
+| `repo` | string | Repository namespace. |
+
+**Emitted by**: `doc_parser.py` (`extract_pdf`, `extract_markdown`). Opt-in via `--extract-docs`.
+
+**Common queries**:
+
+```cypher
+// All indexed documents
+MATCH (d:Document) RETURN d.path, d.file_type, d.loc ORDER BY d.loc DESC
+
+// Markdown documents with their sections
+MATCH (d:Document {file_type: 'markdown'})-[:HAS_SECTION]->(s:DocumentSection)
+RETURN d.path, s.heading, s.section_index
+```
+
+### 2.17 `DocumentSectionNode` → `:DocumentSection`
+
+**Purpose**: a section within a document, derived from PDF outline bookmarks or Markdown headings.
+
+**Properties**:
+
+| Name | Type | Description |
+|---|---|---|
+| `id` | string | `docsec:<repo>:<path>#<section_index>`. Unique. |
+| `path` | string | Parent document path. |
+| `heading` | string | Section heading text. |
+| `section_index` | int | Zero-based sequential index. |
+| `text_sample` | string | First 500 characters of section content. |
+| `repo` | string | Repository namespace. |
+
+**Emitted by**: `doc_parser.py`. Linked to its parent `:Document` via `HAS_SECTION`.
+
+### 2.18 `ConceptNode` → `:Concept`
+
+**Purpose**: a reusable technical idea, pattern, or principle extracted from documentation by the Claude semantic pass. All concept nodes carry `extracted_by="claude"`.
+
+**Properties**:
+
+| Name | Type | Description |
+|---|---|---|
+| `id` | string | `concept:<repo>:<source_file>#<name>`. Unique. |
+| `name` | string | Concept name (e.g. "incremental indexing"). |
+| `description` | string | 1-3 sentence description. |
+| `source_file` | string | Repo-relative path of the source markdown file. |
+| `extracted_by` | string | Always `"claude"`. |
+| `repo` | string | Repository namespace. |
+
+**Emitted by**: `semantic_extract.py`. Opt-in via `--extract-markdown`.
+
+**Common queries**:
+
+```cypher
+// All concepts and their source docs
+MATCH (d:Document)-[:DOCUMENTS_CONCEPT]->(c:Concept)
+RETURN c.name, c.description, d.path
+
+// Concepts in a specific repo
+MATCH (c:Concept {repo: 'myrepo'}) RETURN c.name, c.source_file
+```
+
+### 2.19 `DecisionNode` → `:Decision`
+
+**Purpose**: an explicit architectural or design choice extracted from documentation. Follows the ADR (Architecture Decision Record) pattern.
+
+**Properties**:
+
+| Name | Type | Description |
+|---|---|---|
+| `id` | string | `decision:<repo>:<source_file>#<title>`. Unique. |
+| `title` | string | Decision title (e.g. "Use Neo4j as the graph backend"). |
+| `context` | string | Context or motivation for the decision. |
+| `status` | string | `"proposed"`, `"accepted"`, `"deprecated"`, or `"superseded"`. |
+| `source_file` | string | Repo-relative path. |
+| `markdown_line` | int | Approximate line number in the source file (0 if unknown). |
+| `extracted_by` | string | Always `"claude"`. |
+| `repo` | string | Repository namespace. |
+
+**Emitted by**: `semantic_extract.py`. Opt-in via `--extract-markdown`.
+
+**Common queries**:
+
+```cypher
+// All accepted decisions
+MATCH (d:Decision {status: 'accepted'}) RETURN d.title, d.context, d.source_file
+
+// Decisions with their rationale
+MATCH (r:Rationale)-[:JUSTIFIES]->(d:Decision)
+RETURN d.title, r.text
+```
+
+### 2.20 `RationaleNode` → `:Rationale`
+
+**Purpose**: an explanation of *why* a decision was made, linking back to the decision it justifies.
+
+**Properties**:
+
+| Name | Type | Description |
+|---|---|---|
+| `id` | string | `rationale:<repo>:<source_file>#<decision_title>`. Unique. |
+| `text` | string | The rationale text (1-3 sentences). |
+| `decision_title` | string | Title of the decision this rationale justifies. |
+| `source_file` | string | Repo-relative path. |
+| `extracted_by` | string | Always `"claude"`. |
+| `repo` | string | Repository namespace. |
+
+**Emitted by**: `semantic_extract.py`. Linked to `:Decision` via `JUSTIFIES`.
+
 ### Singleton helper labels
 
 Three more node labels exist but aren't backed by a dataclass — they're singleton MERGE'd by the loader from edge metadata:
@@ -565,7 +690,23 @@ Every relationship has `confidence` + `confidence_score` properties. The "Defaul
 |---|---|---|---|
 | `MEMBER_OF` | any → `:EdgeGroup` | A node participates in a group (protocol implementers, Leiden community). See [`hyperedges.md`](hyperedges.md). | `EXTRACTED` 1.0 |
 
-### 3.14 Other
+### 3.14 Documents (Phase 11)
+
+| Edge | From → To | Emitted when | Default confidence |
+|---|---|---|---|
+| `HAS_SECTION` | `:Document` → `:DocumentSection` | A document has been split into sections (PDF outline or Markdown headings). | `EXTRACTED` 1.0 |
+| `REFERENCES_DOCUMENT` | `:File` → `:Document` | Reserved for future use: a code file references a document (e.g. links to a design doc in comments). | `INFERRED` 0.7 |
+
+### 3.15 Semantic extraction (Phase 12)
+
+| Edge | From → To | Emitted when | Default confidence |
+|---|---|---|---|
+| `DOCUMENTS_CONCEPT` | `:Document` → `:Concept` | A document contains a concept identified by the Claude semantic pass. | `INFERRED` (score from Claude) |
+| `DECIDES` | `:Document` → `:Decision` | A document contains a decision. | `INFERRED` (score from Claude) |
+| `JUSTIFIES` | `:Rationale` → `:Decision` | A rationale explains why a decision was made. | `INFERRED` (score from Claude) |
+| `SEMANTICALLY_SIMILAR_TO` | any → any | Reserved for future use: two nodes are semantically similar based on embedding distance. | `INFERRED` (variable) |
+
+### 3.16 Other
 
 | Edge | From → To | Emitted when | Default confidence |
 |---|---|---|---|
@@ -588,6 +729,8 @@ The loader writes nodes and edges in nine logical phases, ordered so each phase 
 9. **Frontend / atoms (Phase 8)** — `:Atom`, `:Route`, `:EnvVar` nodes; `DEFINES_ATOM`, `READS_ATOM`, `WRITES_ATOM`, `READS_ENV`, `RENDERS`, `USES_HOOK` edges.
 10. **Packaging (Phase 9)** — `:Package` nodes (one per `-p <path>` scope) and `BELONGS_TO` edges. Implemented as a top-of-load step, but logically last because it summarises the whole pass.
 11. **Hyperedges (Phase 10)** — `:EdgeGroup` nodes for protocol implementers (during indexing) and Leiden communities (via `codegraph analyze --leiden`). `MEMBER_OF` edges from each member.
+12. **Documents (Phase 11)** — `:Document` and `:DocumentSection` nodes from PDF and Markdown files. `HAS_SECTION` edges from document to section. Opt-in via `--extract-docs`.
+13. **Semantic extraction (Phase 12)** — `:Concept`, `:Decision`, and `:Rationale` nodes extracted from Markdown via the Claude API. `DOCUMENTS_CONCEPT`, `DECIDES`, `JUSTIFIES` edges. All edges are `INFERRED` with per-item confidence scores. Opt-in via `--extract-markdown`.
 
 ---
 

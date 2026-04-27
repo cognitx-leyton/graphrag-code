@@ -2,7 +2,7 @@
 
 > **Purpose of this document.** Capture enough context for a fresh agent session (or a human returning after time away) to continue work on codegraph without re-deriving state from scratch. Separate from the user-facing roadmap bullets in `README.md`, which stay short and pitch-oriented.
 >
-> **Last updated:** 2026-04-25 — comprehensive docs sweep on `hotfix` (README, init.md, claude-md-snippet, ROADMAP). v0.1.99.
+> **Last updated:** 2026-04-27 after PR #287 created — epic #271 graphify-parity closeout (closed 8 sub-issues #263–#270, opened PR to main). 9 new findings from code review noted for follow-up. v0.1.105.
 
 ---
 
@@ -27,11 +27,12 @@ Catch-up pass that synchronises all user-facing docs with the current codebase a
 
 ## TL;DR — where we are
 
-- **Branch:** `archon/task-fix-issue-259`. Deduplication of template-var and container-name logic: `derive_container_name(root)` and `build_template_vars(...)` extracted into `init.py` as public helpers. `_build_install_vars` in `cli.py` now delegates to them. Port consistency fix: `NEO4J_BOLT_PORT` and `NEO4J_HTTP_PORT` now read from env (with `init.py` defaults) instead of hardcoded literals. Closes issue #259. v0.1.95.
-- **Tests:** 807 passing (5 new: `derive_container_name` determinism + path-differentiation, `build_template_vars` all-keys + cross-pairs + custom ports), 11 skipped, 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
+- **Branch:** `archon/task-feat-issue-271-graphify-parity`. Epic #271 closeout — 8 sub-issues (#263–#270) closed, PR #287 open targeting `main`. No new code; all feature work was implemented in prior commits on this branch. v0.1.105.
+- **Tests:** 1057 passing, 11 skipped, 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
+- **Open PR:** [cognitx-leyton/codegraph#287](https://github.com/cognitx-leyton/codegraph/pull/287) — epic summary table, `Closes #271`, targets `main`.
 - **Graph indexed:** Twenty CRM is currently loaded into the local Neo4j container at `bolt://localhost:7688` (13,473 files, 2,559 classes, 6,088 methods, 5,562 CALLS, 6,708 hook usages, 4,593 RENDERS).
 - **MCP server:** 15 read-only tools (incl. new `describe_group`) + **2 write tools** (`wipe_graph`, `reindex_file`) gated by `--allow-write` flag + **29 prompt templates** (all Cypher blocks from `queries.md` auto-registered via `_register_query_prompts()`). `codegraph-mcp` console script registered. Smoke-tested via raw JSON-RPC.
-- **Package:** `cognitx-codegraph` v0.1.55 in `pyproject.toml`. Wheel + sdist build cleanly. **Not yet on PyPI** — needs one-time operational setup (Trusted Publisher registration). `release.yml` now waits for propagation and smoke-tests the published version.
+- **Package:** `cognitx-codegraph` v0.1.105 in `pyproject.toml`. Wheel + sdist build cleanly. **Not yet on PyPI** — needs one-time operational setup (Trusted Publisher registration). `release.yml` now waits for propagation and smoke-tests the published version.
 - **Resolver:** Workspace import resolution now handles bare package names and subpath imports for monorepos (`twenty-ui/display` → `packages/twenty-ui/src/display/index.ts`). Scoped npm packages (`@scope/pkg/sub`) resolved correctly. `tsconfig.json` `"extends"` chains followed recursively (including TS 5.0+ array form). Estimated ~8,081 previously-unresolved Twenty workspace imports now route correctly.
 - **CI:** `.github/workflows/arch-check.yml` — every PR to `main` spins up Neo4j, indexes, runs `codegraph arch-check`, fails on architecture violations. Verified live on PR #8 (42s, exit 0).
 - **Onboarding:** `codegraph init` scaffolds everything needed to dogfood codegraph in any repo. Live-tested against 3 fixtures including the real Twenty monorepo (13k files indexed end-to-end).
@@ -42,8 +43,33 @@ Catch-up pass that synchronises all user-facing docs with the current codebase a
 
 ## Shipped since the last roadmap update (commit `ea07455`)
 
+### epic #271 closeout — graphify parity (no code, GitHub ops only)
+
+- All 8 sub-issues (#263 schema-namespacing, #264 PDF ingestion, #265 markdown semantic extraction, #266 vision extraction, #267 audio transcription, #268 clone command, #269 parse-result validator, #270 graph HTML polish) closed with references to their implementing commits.
+- Epic issue #271 closed with a summary comment linking all 8 sub-issues.
+- PR #287 created targeting `main` with epic summary table.
+- Arch-check: 4/4 PASS. Tests: 1057/1057 PASS.
+- 9 new findings from the consolidated code review noted above (8 → "Known open questions", 3 pre-existing trackers #277/#278/#285 already open).
+
 ```
-<unreleased> feat(audit): codegraph audit — agent-driven extraction self-check
+19376d7  feat(export): polish graph HTML — community toggle, convex hull, search UX
+776bf01  feat(validate): add parse-result validator to catch malformed extractions before Neo4j load (#284)
+b691de1  feat(clone): add codegraph clone command to index remote Git repos (#283)
+a4bb1a2  feat(audio): Whisper-based audio/video transcription (#267) (#282)
+b7f331e  fix(audio): wire TRANSCRIBED_FROM edge into loader and CLI emission
+3dde404  feat(audio): Whisper-based audio/video transcription with DocumentNode extraction
+a6c9221  feat(vision): image/vision semantic extraction with ILLUSTRATES_CONCEPT edges (#280)
+d2e6f06  feat(semantic): markdown semantic extraction — Concept, Decision, Rationale nodes (#279)
+38bd173  feat(docs): PDF document ingestion with outline and page-based section extraction (#276)
+6990e71  fix(schema): namespace all node IDs with repo to prevent cross-repo overwrite (#273)
+743c02f  chore: bump version to 0.1.103
+0c659f3  fix: 5 issues uncovered by the 0.1.102 e2e run
+c289630  chore: bump version to 0.1.102
+87a0e9a  feat(audit): codegraph audit — agent-driven extraction self-check
+11135f9  fix(init): align _DEFAULT_BOLT_PORT/_DEFAULT_HTTP_PORT to 7688/7475 + bump 0.1.101
+137812e  chore: bump version to 0.1.100
+1cd47f3  feat(init): shared codegraph-neo4j container with auto-detect, auto-start, Docker preflight
+0f3480a  docs: refresh top-level README, add CHANGELOG, ship 5 deep-dive doc files
 f887f70  refactor(install): deduplicate template-var logic into init.py (issue #259)
 6a359f0  fix(install): preserve shared AGENTS.md sections during partial uninstall (#261, closes #257)
 9fae95b  fix(install): resolve template variables in platform install content (#260, closes #256)
@@ -58,6 +84,287 @@ e0a172d  feat(analyze): add Leiden community detection and graph analysis (#253)
 c4571c6  feat(cache): SHA-256 content-addressed cache for incremental indexing (#46) (#248)
 3f394de  fix(test): add watchdog to test extra so test_watch.py tests pass
 ```
+
+### export — graph HTML viewer polish (issue #270)
+
+- `19376d7 feat(export)` — Two files changed (0 new, 2 updated):
+
+  **Updated files:**
+
+  1. **`codegraph/codegraph/export.py`** — Three functions updated:
+
+     - **`to_html()`** — Partitions `EdgeGroup` nodes and `MEMBER_OF` edges out of the vis.js render (EdgeGroup synthetic nodes were showing as dangling vertices). Builds per-community sidebar HTML: one checkbox + HSL-coloured swatch per community, with `html.escape()` + `_js_safe()` on community labels to prevent XSS. Stats line counts only regular (non-EdgeGroup) nodes.
+
+     - **`_community_css()`** (new helper) — Inline CSS block for the sidebar: `#sidebar` toggle button, `#communities` collapsible section with `#communities:empty { display: none; }` guard (prevents empty padding/border when no communities exist).
+
+     - **`_html_script()`** — Three features added:
+       - **Community filter toggles**: `change` handler on each checkbox. `cb` variable used consistently throughout (avoids `this` vs. `cb` ambiguity inside nested callbacks). Unchecking a community hides all member nodes via `nodes.update({hidden: true})`.
+       - **Convex hull overlays**: inline Graham-scan (~25 lines JS, no external dependency). Rendered via vis.js `afterDrawing` canvas hook. Semi-transparent `hsla` fills (alpha 0.12) and strokes (alpha 0.3), padded 20px outward from centroid. Skips communities with <3 hull points (e.g. collinear layouts).
+       - **Diacritic-insensitive search**: `stripDiacritics()` helper using `String.prototype.normalize('NFD')` + Unicode combining-marks regex. Applied to both the search query and node labels/titles so accented characters match their base form.
+
+  2. **`codegraph/tests/test_export.py`** — Two fixtures + five tests added:
+     - `community_result` fixture — `ParseResult` with two community `EdgeGroup` nodes + `MEMBER_OF` edges.
+     - `html_with_communities` fixture — calls `to_html()` on the above.
+     - `test_to_html_community_checkboxes` — verifies `class="community-item"` items present.
+     - `test_to_html_community_colors` — verifies `hsl(` colour swatches in sidebar.
+     - `test_to_html_no_edgegroup_in_vis` — verifies EdgeGroup label absent from vis.js `nodes` array.
+     - `test_to_html_no_communities_graceful` — verifies no sidebar checkboxes when no communities.
+     - `test_to_html_community_label_escaped` — verifies `<script>` in community label is HTML-escaped.
+
+  **Code review (2 issues found and fixed):**
+  - `[BUG]` Empty `#communities` div rendered padding + border when no communities → fixed with `#communities:empty { display: none; }` CSS rule.
+  - `[STYLE]` `this.checked` / `this.dataset.community` mixed with `cb.checked` in same handler → normalised to `cb.*` throughout.
+
+  **Pre-existing pattern noted (out of scope):** search-clear resets `hidden: false` on ALL nodes, including community-hidden ones — same behaviour as the legend toggle. Not fixed here.
+
+  - **Validation:** 1056 tests pass (5 new), 11 skipped, 0 failures. Byte-compile clean. Arch-check: 4/4 policies pass.
+
+### validate — parse-result validator before Neo4j load (issue #269)
+
+- `e2ee2fb feat(validate)` — Three files changed (2 new, 1 updated):
+
+  **New files:**
+
+  1. **`codegraph/codegraph/parse_validator.py`** (~200 LOC) — Validation module. `VALID_EDGE_KINDS` (49 entries: 48 schema constants + `__STATS__` sentinel). `VALID_CONFIDENCE_LABELS` (`EXTRACTED`, `INFERRED`, `AMBIGUOUS`). `SYNTHETIC_ID_PREFIXES` (`external:`, `dec:`, `hook:`, `edgegroup:`) — these reference no on-disk node, so dangling-ref checks skip them. `validate_parse_result(result)` performs per-file validation: duplicate node IDs, edges whose `src_id`/`dst_id` reference an unknown node, edges with an unrecognised `kind`, edges with an invalid `confidence` label or `confidence_score` outside `[0.0, 1.0]`. `validate_cross_file_edges(edges, all_node_ids)` validates resolver-emitted cross-file edges against the full global node pool; skips `__STATS__` sentinel edges. `assert_valid(...)` raises `ValueError` with all error messages joined — used by strict mode.
+
+  2. **`codegraph/tests/test_parse_validator.py`** (20 tests) — Covers all 5 error classes (duplicate ID, dangling src/dst, unknown edge kind, invalid confidence label, out-of-range confidence score), all 4 synthetic prefix types accepted without false positives, `assert_valid` raise/pass behaviour, cross-file validation with global pool, `__STATS__` sentinel skipping, integration self-parse of real source files producing zero errors.
+
+  **Updated files:**
+
+  3. **`codegraph/codegraph/cli.py`** — Added `--strict-validate` flag (default: off) to `codegraph index`. Per-file validation runs after each parse, before `index_obj.add(result)`. Cross-file validation runs after `link_cross_file()`, before Neo4j write. Default mode: log warnings and continue. Strict mode: aggregate all errors across all files then raise `ConfigError` (exits cleanly with code 1). Cached results skip re-validation (errors were already reported on the original parse). Import added between `.ownership` and `.parser` (alphabetical order preserved).
+
+  **Code review (2 issues found and fixed):**
+  - `[STYLE]` `from .parse_validator` import placed after `.schema`, breaking alphabetical ordering → moved between `.ownership` and `.parser`.
+  - `[LINT]` `FunctionNode` and `MethodNode` imported but unused in `test_parse_validator.py` → removed.
+
+  **Pre-existing bug discovered (out of scope — separate issue):** `py_parser.py:482` emits `dst_id=f"col:{cls.id}#..."` but `ColumnNode.id` returns `f"column:{cls.id}#..."`. The `col:` vs `column:` prefix mismatch means HAS_COLUMN edges have dangling `dst_id` on Python ORM codebases. The validator correctly flags this. Not fixed here.
+
+  - **Validation:** 1051 tests pass (20 new), 11 skipped, 0 failures. Byte-compile clean.
+
+### clone — index remote Git repos by URL (issue #268)
+
+- `0728528 feat(clone)` + `7cb1fdd fix(clone)` — Three files changed (2 new, 1 updated):
+
+  **New files:**
+
+  1. **`codegraph/codegraph/clone.py`** (~200 LOC) — Core clone module. `parse_github_url(url)` parses both HTTPS (`https://github.com/owner/repo`) and SSH (`git@github.com:owner/repo`) GitHub URL forms into an `(owner, repo)` tuple; raises `ValueError` on unrecognised shapes. `cache_dir(owner, repo)` returns `~/.codegraph/repos/<owner>/<repo>` — persistent cross-session repo cache. `clone_or_pull(url, dest, *, full_clone, quiet)` either runs `git clone --depth 1` (shallow by default; `--full-clone` omits `--depth 1`) or `git pull --ff-only` when the destination already exists. `run_clone(url, *, packages, full_clone, json_output, neo4j_uri, neo4j_user, neo4j_password, repo_name)` orchestrates: parse URL → clone/pull → auto-detect packages from config when none supplied → delegate to `_run_index()`. Connection errors from `_run_index()` are caught as `(ServiceUnavailable, AuthError)` and exit with code 2.
+
+  2. **`codegraph/tests/test_clone.py`** (25 tests) — All git operations mocked via `unittest.mock.patch`. Covers: 9 URL parsing tests (HTTPS, SSH, trailing `.git`, port in URL, non-GitHub host, malformed inputs); 3 cache directory tests (path shape, owner/repo isolation); 5 git operation tests (fresh clone, cached pull, `--full-clone` omits `--depth 1`, pull failure raises `RuntimeError`, non-zero exit code); 7 integration tests for `run_clone()` (happy path with `repo` kwarg assertion, custom packages override, no packages falls back to config, `ServiceUnavailable` exits with code 2).
+
+  **Updated files:**
+
+  3. **`codegraph/codegraph/cli.py`** — Thin `@app.command() def clone(...)` Typer wrapper. Options: `url` positional, `--package/-p` (repeatable), `--full-clone`, `--json`, Neo4j `--uri`/`--user`/`--password`. No post-index export/benchmark/analyze post-processing (those remain `codegraph index`-only for now).
+
+  **Code review (7 issues found and fixed):**
+  - `[BUG]` `no_export`, `no_benchmark`, `no_analyze` accepted by `run_clone()` but never used → removed from function signature and CLI wrapper.
+  - `[BUG]` `except Exception` in connection-error path too broad → narrowed to `(ServiceUnavailable, AuthError)` matching `index` command.
+  - `[LINT]` `CodegraphConfig` imported but unused in `clone.py` → removed.
+  - `[LINT]` `MagicMock` imported but unused in `test_clone.py` → removed.
+  - `[TEST GAP]` `test_happy_path` didn't verify `repo` kwarg pointed to cache dir → added `assert call_kw["repo"] == CLONE_CACHE_ROOT / "nestjs" / "nest"`.
+  - `[TEST GAP]` No test for `ServiceUnavailable` from `_run_index` → added `test_connection_error_returns_exit_2`.
+  - `[TEST GAP]` (Pre-existing review fix) Dead CLI flags `--no-export/--no-benchmark/--no-analyze` removed from wrapper.
+
+  - **Validation:** 977 tests pass (25 new), 13 skipped, 0 failures. Byte-compile clean. Arch-check: skipped (Neo4j not running in worktree).
+
+### audio — Whisper-based audio/video transcription (issue #267)
+
+- `3dde404 feat(audio)` + `b7f331e fix(audio)` — Seven files changed (3 new, 4 updated):
+
+  **New files:**
+
+  1. **`codegraph/codegraph/transcribe.py`** (~248 LOC) — Core transcription module. `load_model(device, compute_type)` instantiates a `faster_whisper.WhisperModel` (model size `base`); auto-selects `cuda`/`float16` when CUDA available, else `cpu`/`int8`. `transcribe(path, rel, repo_name, model, cache_dir)` returns a `(DocumentNode, str)` pair — one `DocumentNode` plus the full transcript text. SHA-256 content-addressed cache via `_file_content_hash(path)` (chunked 1 MB reads — safe on the 500 MB limit). Cache stores `{id, path, repo, transcript, indexed_at}` as JSON keyed by `{sha256}:{rel}:{repo}`. 500 MB size guard raises `ValueError` on oversized files. Supported extensions: `.wav`, `.mp3`, `.m4a`, `.ogg`, `.flac`, `.mp4`, `.mov`, `.mkv`, `.webm`, `.avi`. Optional-import guard converts missing `faster_whisper` into a user-friendly `ImportError` message rather than a raw traceback. `faster_whisper` and `yt_dlp` are optional-imported at call time (not module import time) so the rest of codegraph works without the extra installed.
+
+  2. **`codegraph/tests/test_transcribe.py`** (14 tests) — All tests mock `faster_whisper.WhisperModel` so the suite runs without the package installed. Covers: `DocumentNode` field presence, transcript text output, ID format (`doc:{repo}:{rel}`), 500 MB size guard, missing `faster_whisper` guard, cache hit/miss round-trip, `TRANSCRIBED_FROM` schema constant presence, extension list completeness.
+
+  3. **`codegraph/tests/fixtures/audio/sample.wav`** — 1-second silence WAV at 44.1 kHz (16 KB). Used as the live fixture for all `transcribe` tests.
+
+  **Updated files:**
+
+  4. **`codegraph/codegraph/schema.py`** — Added `TRANSCRIBED_FROM = "TRANSCRIBED_FROM"` edge constant (Phase 14). Kept as a schema constant for future use; no edges of this type are currently written to Neo4j (media files never get `:File` nodes, so a back-edge target would not exist).
+
+  5. **`codegraph/codegraph/cli.py`** — Added `--extract-audio` flag to `codegraph index`. Auto-enables `--extract-docs` (so `DocumentNode` loading is wired). Validates `faster_whisper` availability at startup; converts `ImportError` to `ConfigError` (caught by CLI, exits cleanly). Calls `load_model()` once before the loop (not per file). Media walk globs all supported extensions, applies `exclude_dirs` + `ignore_filter`. Per-file error handling: one file failure doesn't abort the batch. `audio_count` only printed in summary when > 0.
+
+  6. **`codegraph/codegraph/loader.py`** — `TRANSCRIBED_FROM` imported from schema (present for completeness; not yet wired to a write path since no `:File` target nodes exist for media files).
+
+  7. **`codegraph/pyproject.toml`** — Added `[transcribe]` optional extra (`faster-whisper>=1.0`, `yt-dlp>=2024.1`). Added `faster-whisper` to `[test]` extra so `test_transcribe.py` can mock it.
+
+  **Code review (6 issues found and fixed):**
+  - `[CRITICAL]` `TRANSCRIBED_FROM` edges targeted non-existent `:File` nodes — media files never get `FileNode` entries, so all edges would be silently dropped by Neo4j MATCH → removed edge creation from CLI; removed from loader dict/loop. Schema constant kept for future use.
+  - `[HIGH]` Unused `Edge` and `TRANSCRIBED_FROM` imports in `transcribe.py` → removed dead imports.
+  - `[HIGH]` `WhisperModel` re-instantiated per file in CLI loop — seconds of model loading per file → extracted `load_model()` function; CLI calls once, passes `model` param to `transcribe()`.
+  - `[HIGH]` `_file_content_hash` read up to 500 MB into memory via `read_bytes()` → changed to chunked 1 MB reads.
+  - `[HIGH]` Missing `faster-whisper` + `--extract-audio` → unhandled `ImportError` raw traceback → wrapped `load_model()` call in try/except, converts to `ConfigError` (caught by CLI).
+  - `[MEDIUM]` Unused `load_model` import in test file → removed.
+
+  - **Validation:** 1006 tests pass (14 new), 11 skipped, 0 failures. Byte-compile clean. Arch-check: 4/4 policies pass.
+
+### vision — image/vision semantic extraction with ILLUSTRATES_CONCEPT edges (issue #266)
+
+- `66f70cd feat(vision)` — Seven files changed (4 new, 3 updated):
+
+  **New files:**
+
+  1. **`codegraph/codegraph/vision_extract.py`** (~220 LOC) — Claude vision API integration. `VisionCache` (alias of `SemanticCache`) keyed by file SHA-256 + `rel` + `repo_name`. `_MEDIA_TYPES` dict maps extension → MIME type (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`). `_file_content_hash(path)` reads the file and returns its SHA-256 hex digest. `extract_vision(image_path, rel, repo_name, api_key)` encodes the image as base64, calls the Anthropic API with the `vision.md` prompt, and parses the structured response into a list of `Edge` objects with `kind=ILLUSTRATES_CONCEPT`. `_parse_vision_response()` extracts headings-delimited concept sections and returns one `Edge` per concept. 20 MB size guard raises `ValueError` on oversized files.
+
+  2. **`codegraph/codegraph/templates/semantic/vision.md`** — Prompt template for image concept extraction. Instructs the model to identify concepts illustrated or referenced in the image (diagrams, architecture charts, screenshots, wireframes). Strict output schema with `## Concepts` section; anti-hallucination constraints.
+
+  3. **`codegraph/tests/test_vision_extract.py`** (18 tests) — Covers happy path (concept count, edge kind, target ID format), cache hit/miss, oversized file guard, unsupported extension guard, API key validation, `_parse_vision_response` with fence stripping, empty response, SHOWS_ARCHITECTURE constant presence, base64 encoding round-trip.
+
+  4. **`codegraph/tests/fixtures/images/sample.png`** — 1×1 white PNG (~68 bytes). Used as the live fixture for all `vision_extract` tests.
+
+  **Updated files:**
+
+  5. **`codegraph/codegraph/schema.py`** — Added `ILLUSTRATES_CONCEPT = "ILLUSTRATES_CONCEPT"` and `SHOWS_ARCHITECTURE = "SHOWS_ARCHITECTURE"` edge constants (Phase 13).
+
+  6. **`codegraph/codegraph/loader.py`** — Added `ILLUSTRATES_CONCEPT` to the edge-label map and the write loop so vision edges are persisted to Neo4j. Import ordering corrected (alphabetical).
+
+  7. **`codegraph/codegraph/cli.py`** — Added `--extract-images` flag to `codegraph index` (implies `--extract-docs` and requires `ANTHROPIC_API_KEY`). Image walk globs `**/*.{png,jpg,jpeg,gif,webp}`, applies `exclude_dirs` + `ignore_filter`. Vision extraction dispatches per-file with per-file error handling. `img_count` only printed in summary when > 0. Edge kind comparison uses `ILLUSTRATES_CONCEPT` constant (not string literal).
+
+  **Code review (3 issues found and fixed):**
+  - `[IMPORT ORDER]` `loader.py` — `ILLUSTRATES_CONCEPT` inserted between `DocumentNode` and `DocumentSectionNode` breaking alphabetical order → moved after `DocumentSectionNode`.
+  - `[UX]` `cli.py` summary printed `"+ 0 image(s)"` even when `--extract-images` was not used → moved image count into a conditional (`if img_count`).
+  - `[ROBUSTNESS]` `cli.py` vision summary used string literal `'ILLUSTRATES_CONCEPT'` for edge kind check → replaced with the imported constant.
+
+  - **Validation:** 992 tests pass (18 new), 11 skipped, 0 failures. Byte-compile clean. Arch-check: 4/4 policies pass.
+
+### docs — markdown semantic extraction via Claude API (issue #265)
+
+- `57b1a4a feat(docs)` — Fifteen files changed (7 new, 8 updated):
+
+  **New files:**
+
+  1. **`codegraph/codegraph/semantic_extract.py`** (~270 LOC) — Claude API integration. `SemanticCache` (SHA-256 content hash + `rel` + `repo_name` → cached `SemanticResult`). `SemanticResult` dataclass (fields: `concepts: list[ConceptNode]`, `decisions: list[DecisionNode]`, `rationales: list[RationaleNode]`). `extract_semantics(content, rel, repo_name, api_key)` calls the Anthropic API with `max_tokens=2048`, parses the structured YAML-like response, and returns a `SemanticResult`. `_parse_response()` strips fenced code blocks, extracts headings-delimited sections, and maps them to node dataclasses. `_slugify(text)` normalises free-text LLM output into safe node-ID segments. `rationale_index` field disambiguates multiple rationales for the same decision.
+
+  2. **`codegraph/codegraph/templates/semantic/extract.md`** — Prompt template for concept/decision/rationale extraction. Instructs the model to identify concepts (named entities/abstractions), decisions (architectural/design choices with explicit rationale), and rationale nodes (the "why" behind each decision). Includes strict output schema and anti-hallucination constraints.
+
+  3. **`.env.example`** — Documents `ANTHROPIC_API_KEY` requirement for `--extract-markdown`.
+
+  4. **`codegraph/tests/fixtures/markdown/concepts.md`** — Fixture with headings + concept-dense text.
+  5. **`codegraph/tests/fixtures/markdown/decisions.md`** — Fixture with explicit architectural decisions.
+  6. **`codegraph/tests/fixtures/markdown/empty.md`** — Zero-content fixture.
+  7. **`codegraph/tests/fixtures/markdown/no-headings.md`** — Flat prose, no Markdown headings.
+
+  8. **`codegraph/tests/test_doc_parser_markdown.py`** (10 tests) — Deterministic markdown extraction: `extract_markdown()` returns `(DocumentNode, list[DocumentSectionNode])`, section IDs are sequential, headings inside fenced code blocks are not extracted, repo-namespaced IDs (`doc:repo:path` / `docsec:repo:path#0`), ISO-8601 `indexed_at`, path consistency.
+
+  9. **`codegraph/tests/test_semantic_extract.py`** (14 tests) — Semantic extraction with mocked Anthropic client: happy path (concept/decision/rationale counts), `rationale_index` uniqueness, degenerate fence stripping, cache hit/miss, empty-response handling, API key validation (whitespace rejected), `_slugify` output, `SemanticCache.cache_key` includes `rel` and `repo_name` (prevents cross-file cache collisions).
+
+  **Updated files:**
+
+  10. **`codegraph/codegraph/schema.py`** — Added `ConceptNode` (fields: `id`, `name`, `description`, `repo`, `path`), `DecisionNode` (fields: `id`, `title`, `description`, `repo`, `path`), `RationaleNode` (fields: `id`, `rationale_index`, `text`, `repo`, `path`, `decision_id`). All IDs embed `_slugify(name/title)` + hash suffix for safety. Added edge constants: `DOCUMENTS_CONCEPT`, `DECIDES`, `JUSTIFIES`, `SEMANTICALLY_SIMILAR_TO`.
+
+  11. **`codegraph/codegraph/doc_parser.py`** — Added `extract_markdown(path, repo_name)` function. Heading-based section extraction (`##`-level headings split sections). Fenced code block stripping before heading detection (headings inside ` ```...``` ` blocks are ignored). Returns `(DocumentNode, list[DocumentSectionNode])`.
+
+  12. **`codegraph/codegraph/loader.py`** — Added `ConceptNode`, `DecisionNode`, `RationaleNode` constraints and indexes. Added `concepts`, `decisions`, `rationales` fields to `LoadStats`. Added `_write_concepts()`, `_write_decisions()`, `_write_rationales()`, `_write_semantic_edges()` helpers. Fixed `wipe_scoped` to also clean up Document, DocumentSection, Concept, Decision, Rationale nodes (closes #274). Used labeled MATCH in `_write_semantic_edges` for query performance.
+
+  13. **`codegraph/codegraph/cli.py`** — Added `--extract-markdown` flag (requires `ANTHROPIC_API_KEY`). API key validated (rejects whitespace-only). Markdown walk runs under `--extract-docs` (globs `**/*.md`, applies `exclude_dirs` + `ignore_filter`). Semantic extraction dispatches per-file with per-file error handling (one file failure doesn't abort the batch). Cache key includes `rel` + `repo_name` to prevent cross-file collisions. Semantic nodes threaded into `loader.load()`.
+
+  14. **`codegraph/pyproject.toml`** — Added `[semantic]` extra (`anthropic>=0.40`). Added `anthropic` to `[test]` extra.
+
+  15. **`codegraph/docs/schema.md`** + **`codegraph/docs/cli.md`** — Documented all 5 new node types (Document, DocumentSection, Concept, Decision, Rationale), 6 new edge types, Phase 11/12 indexing, and `--extract-docs` / `--extract-markdown` / `--repo-name` CLI flags.
+
+  **Code review (8 issues found and fixed across two rounds):**
+  - `[HIGH]` `cli.py` name collision: `extract_markdown` bool shadowed by function import of the same name → renamed import to `extract_markdown_doc`.
+  - `[HIGH]` Cache key omitted `rel` and `repo_name` → cross-file cache collisions possible → added both to `SemanticCache.cache_key()`.
+  - `[HIGH]` Free-text LLM output used raw in node IDs (concept names could contain `#`, `:`, spaces) → `_slugify()` normalises to safe segments; hash suffix added for disambiguation.
+  - `[MEDIUM]` `RationaleNode` had no disambiguator when a document has multiple rationales for the same decision → `rationale_index: int` field added.
+  - `[MEDIUM]` `semantic_extract.py` fence stripping raised `ValueError` on degenerate ` ``` ` without closing fence → replaced with regex substitution.
+  - `[MEDIUM]` `_get_score` used name-based matching for rationales (fragile on LLM paraphrase) → replaced with index-based matching.
+  - `[MEDIUM]` `_write_semantic_edges` in loader used unlabeled `MATCH (n)` (full scan) → replaced with label-aware MATCH per edge kind.
+  - `[LOW]` `loader.py` `_write_rationales` omitted `rationale_index` from the Cypher SET → added.
+
+  - **Validation:** 974 tests pass (24 new), 11 skipped, 0 failures. Byte-compile clean. Arch-check: 4/4 policies pass.
+
+### docs — PDF document ingestion with outline and page-based section extraction (issue #264)
+
+- `260394c feat(docs)` — Seven files changed (3 new, 4 updated):
+
+  **New files:**
+
+  1. **`codegraph/codegraph/doc_parser.py`** (~230 LOC) — PDF extraction module. `extract_pdf(path, repo_name)` returns a `(DocumentNode, list[DocumentSectionNode])` pair. `_sections_from_outline()` splits content by PDF bookmarks (each bookmark → one `DocumentSectionNode` with the page's extracted text). `_sections_from_pages()` falls back to one section per page when no outline is present. Size guard: files >50 MB are skipped with a warning. Encrypted PDFs: `reader.decrypt("")` attempted; failure raises `ValueError`. Empty-text pages are silently skipped (sequential `section_index` counter prevents ID gaps — one bug found and fixed during review). ISO-8601 `indexed_at` timestamp on every `DocumentNode`. Repo-namespaced IDs: `doc:{repo}:{path}` / `docsec:{repo}:{path}#{section_index}`.
+
+  2. **`codegraph/tests/test_doc_parser.py`** (8 tests) — Covers basic extraction (DocumentNode fields, section count), section IDs sequential, repo namespacing, missing `pypdf` error, ISO-8601 timestamp, path consistency (all sections share doc's path).
+
+  3. **`codegraph/tests/fixtures/docs/sample.pdf`** — 3-page PDF with outline bookmarks (~3 KB), generated from `fpdf2`. Used as the live fixture for all `doc_parser` tests.
+
+  **Updated files:**
+
+  4. **`codegraph/codegraph/schema.py`** — Added `DocumentNode` dataclass (fields: `id`, `path`, `repo`, `page_count`, `title`, `indexed_at`) and `DocumentSectionNode` dataclass (fields: `id`, `doc_id`, `path`, `repo`, `section_index`, `heading`, `text_sample`). Added `HAS_SECTION = "HAS_SECTION"` and `REFERENCES_DOCUMENT = "REFERENCES_DOCUMENT"` edge constants.
+
+  5. **`codegraph/codegraph/loader.py`** — Added `DocumentNode` / `DocumentSectionNode` constraints and indexes in `init_schema()`. Added `documents: int` and `document_sections: int` to `LoadStats`. Added `documents` / `document_sections` params to `load()`. Added `_write_documents(session, documents, document_sections)` helper with batched MERGE for both node types plus `HAS_SECTION` relationship.
+
+  6. **`codegraph/codegraph/cli.py`** — Added `--extract-docs` flag (opt-in, defaults `False`) to `codegraph index`. PDF walk block added to `_run_index()`: globs `**/*.pdf`, applies `exclude_dirs` and `ignore_filter`, calls `extract_pdf()` per file, aggregates results. `documents` / `document_sections` counts propagated through `_flatten_load_stats()` and `_print_load_stats_dict()`.
+
+  7. **`codegraph/pyproject.toml`** — Added `docs = ["pypdf>=4.0"]` optional extra. Added `pypdf` to the `test` extra so tests can import it without `[docs]`.
+
+  **Code review (1 bug found and fixed):**
+  - `[BUG]` `_sections_from_pages` used page enumeration index (`idx`) as `section_index`. When empty pages are skipped, this produced non-sequential IDs (e.g. `#0, #2`), breaking the sequential contract and leaving orphan ID slots → replaced `idx` with a `seq` counter that only increments when a section is emitted.
+
+  - **Validation:** 945 tests pass (8 new), 11 skipped, 0 failures. Byte-compile clean. Arch-check: 4/4 policies pass (1 skipped).
+
+### schema — repo-namespaced node IDs to prevent cross-repo overwrite (issue #263)
+
+- `9d19261 feat(schema)` — Nine production files changed, nine test files updated, one new test file:
+
+  **Root cause.** When two repos are indexed into the same Neo4j instance (e.g. a monorepo + a library), `MERGE (f:File {path: $path})` collides on any file that shares a relative path (`src/index.ts`). The same problem existed for `Class`, `Function`, `Method`, `Interface`, `Endpoint`, `Atom`, and `GraphQLOperation` nodes keyed on `#`-qualified paths. The fix namespaces every file-bearing ID with a `repo` segment.
+
+  **New ID format.** All IDs that embed a file path gain a `repo:` segment:
+  - `file:myrepo:src/index.ts` (was `file:src/index.ts`)
+  - `class:myrepo:src/index.ts#UserService` (was `class:src/index.ts#UserService`)
+  - `method:class:myrepo:src/index.ts#UserService#create` (unchanged outer prefix)
+  - `endpoint:POST:/users@myrepo:src/ctrl.ts#create` (was `endpoint:POST:/users@src/ctrl.ts#create`)
+  - `gqlop:query:ListUsers@myrepo:src/res.ts#listUsers`
+  - `route:`, `atom:`, `func:`, `interface:` — same pattern
+
+  **`--repo-name` CLI flag.** New optional flag on `codegraph index` and `codegraph watch`. Defaults to the directory name of the indexed root. Validated to reject `:` and `#` characters that would break ID parsing. Forwarded through `_run_index` → parsers → loader → watcher rebuild subprocess.
+
+  **Files changed:**
+
+  1. **`codegraph/codegraph/schema.py`** — Added `repo: str = "default"` field to `FileNode`, `ClassNode`, `FunctionNode`, `MethodNode`, `InterfaceNode`, `EndpointNode`, `AtomNode`, `GraphQLOperationNode`, `RouteNode`. Each node's `id` property now embeds `self.repo`. `PackageNode.id` uses `f"package:{self.repo}:{self.name}"`.
+
+  2. **`codegraph/codegraph/loader.py`** — All `MERGE` statements that previously keyed on `{path:}` now key on `{id:}` (the repo-namespaced ID). `_file_from_id()` updated to strip the repo segment when extracting the raw file path from any ID shape (handles `file:`, `class:`, `method:`, `endpoint:`, `gqlop:`, `route:` prefixes). `init_schema()` runs a migration step that adds `file_path` as a non-unique index on `:File` after dropping the old unique path constraint. `wipe_scoped()` returns file IDs (not paths) for `delete_file_subgraph()`. Added `file_path` index to `_INDEXES` for legacy-path queries.
+
+  3. **`codegraph/codegraph/cli.py`** — `--repo-name` option on `index` and `watch` sub-commands. Validation guard raises `ConfigError` on `:` or `#` in the value. `effective_repo_name` derived from folder name when flag omitted. File ID construction in incremental-wipe path updated.
+
+  4. **`codegraph/codegraph/resolver.py`** — All cross-file ID constructions (`f"class:{rel}#..."`, `f"func:{rel}#..."`, etc.) updated to embed `repo`. `_caller_id_for_fn` gains a `repo` param. `_find_class` returns raw paths; callers construct the namespaced ID.
+
+  5. **`codegraph/codegraph/py_parser.py`** — `parse_file()` accepts `repo_name: str = "default"`. `FileNode`, `ClassNode`, `FunctionNode`, `MethodNode`, `EndpointNode`, `AtomNode` all receive `repo=repo_name`.
+
+  6. **`codegraph/codegraph/parser.py`** (TS) — Same treatment: `parse_file()` accepts `repo_name`, all node constructors in `_Walker` receive `repo=self.result.file.repo`. `_extract_routes()` also updated.
+
+  7. **`codegraph/codegraph/mcp.py`** — `reindex_file()` constructs a `file_id = f"file:{repo}:{rel}"` and uses `{id: $fid}` for all node `MATCH`/`MERGE` Cypher instead of `{path: $path}`. Parser calls forward `repo_name=repo`.
+
+  8. **`codegraph/codegraph/repl.py`** — `--repo-name` parsed and forwarded to `_run_index`.
+
+  9. **`codegraph/codegraph/watch.py`** — `repo_name` threaded through `run_watch` → `watch` → `_rebuild` → subprocess CLI `--repo-name` flag.
+
+  **New test file:**
+
+  - **`codegraph/tests/test_repo_namespace.py`** (31 tests) — Covers: `file:`, `class:`, `method:`, `endpoint:`, `gqlop:`, `atom:`, `interface:`, `route:` ID format; `_file_from_id` for all prefix shapes including nested `method:class:`; backward-compat IDs without repo segment (defensive path); multi-repo isolation (same path, two repos → two distinct file IDs); `PackageNode` repo isolation; `--repo-name` validation (rejects `:` and `#`).
+
+  **Existing test files updated** (8 files) — Updated hardcoded IDs in `test_incremental.py`, `test_loader_partitioning.py`, `test_loader_pairing.py`, `test_wipe_scoped.py`, `test_confidence.py`, `test_framework.py`, `test_py_parser_calls.py`, `test_py_resolver.py` to include `default:` repo segment.
+
+  **Code review (4 issues found and fixed):**
+  - `[MEDIUM]` `_extract_routes()` created `RouteNode` without `repo` → added `repo_name` param, passed from call site.
+  - `[MEDIUM]` No validation on `--repo-name` for `:` or `#` chars → added `ConfigError` guard.
+  - `[MEDIUM]` Missing `file_path` index after migration drops old uniqueness constraint → added `CREATE INDEX file_path` to `_INDEXES`.
+  - `[LOW]` `AtomNode(family="constant")` in test → corrected to `family=True`.
+
+  - **Validation:** 937 tests pass (31 new), 11 skipped, 0 failures. Byte-compile clean. Arch-check: exit 0.
+
+### init — shared codegraph-neo4j container with auto-detect and auto-start
+
+- `1cd47f3 feat(init)` — `codegraph init` now scaffolds a shared `codegraph-neo4j` container (deterministic name across all repos on the machine) rather than one per project. `docker ps` auto-detect: if the container is already running (from another project's init), init skips the `docker run` step and reuses it. Auto-start: if the container exists but is stopped, init runs `docker start codegraph-neo4j`. Docker preflight check included. `--bolt-port` / `--http-port` flags let teams override the default `7688/7475` when those ports are taken.
+
+- `11135f9 fix(init)` — `_DEFAULT_BOLT_PORT` and `_DEFAULT_HTTP_PORT` constants aligned to `7688` and `7475` everywhere (previously `7687`/`7474` in some paths). `NEO4J_BOLT_PORT` and `NEO4J_HTTP_PORT` env-var reads updated to match.
+
+### fix — 5 issues uncovered by the 0.1.102 e2e run
+
+- `0c659f3 fix` — Five separate regressions surfaced during an end-to-end run against a real repo and fixed in a single commit:
+  1. `loader.py` — stale `{path: $path}` in one `_write_ownership` query missed by the id-migration sweep.
+  2. `resolver.py` — `_resolve_call_target_class` built IDs using bare path (missing repo) in one branch.
+  3. `mcp.py` — `reindex_file` EXPOSES edge used `file:` prefix instead of full `file:repo:path` ID.
+  4. `cli.py` — `delete_file_subgraph` called with raw path instead of file ID in incremental wipe.
+  5. `watch.py` — subprocess CLI call omitted `--repo-name` flag when repo was inferred from folder name.
 
 ### audit — agent-driven extraction self-check (`codegraph audit`)
 
@@ -1507,17 +1814,17 @@ Beyond unit/integration tests, these were dogfooded against real systems:
 
 | Thing | Value |
 |---|---|
-| Current branch | `archon/task-fix-issue-259` |
+| Current branch | `archon/task-feat-issue-271-graphify-parity` |
 | Base branch | `main` |
-| Unpushed commits | 1 (`f887f70` refactor(install): deduplicate template-var logic into init.py — pending PR) |
-| Open PR | None. |
-| Working tree | Clean (untracked: `.claude/plans/deduplicate-template-vars.plan.md`) |
-| Test count | 807 passing + 11 skipped + 0 deselected |
+| Unpushed commits | Branch pushed — PR #287 open targeting `main` |
+| Open PR | [#287](https://github.com/cognitx-leyton/codegraph/pull/287) — epic #271 graphify-parity closeout |
+| Working tree | Clean (untracked: `.claude/plans/epic-271-graphify-parity-closeout.plan.md`) |
+| Test count | 1057 passing + 11 skipped + 0 deselected |
 | Test runtime | ~16 s |
 | Byte-compile | Clean |
-| Last editable install | After `f887f70`. Re-run `cd codegraph && .venv/bin/pip install -e ".[python,mcp,test,watch,analyze]"` after any `pyproject.toml` edit. |
-| Wheel built? | Not yet for v0.1.95. Run `cd codegraph && .venv/bin/pip install build && python -m build` to produce wheel + sdist. |
-| New files | `codegraph/codegraph/platforms.py`, `codegraph/codegraph/templates/platforms/` (8 templates), `codegraph/tests/test_platforms.py` |
+| Last editable install | After `0728528`. Re-run `cd codegraph && .venv/bin/pip install -e ".[python,mcp,test,watch,analyze,docs,semantic,transcribe]"` after any `pyproject.toml` edit. |
+| Wheel built? | Not yet for v0.1.105. Run `cd codegraph && .venv/bin/pip install build && python -m build` to produce wheel + sdist. |
+| New files | `codegraph/codegraph/parse_validator.py`, `tests/test_parse_validator.py`, `codegraph/codegraph/clone.py`, `tests/test_clone.py` |
 
 ---
 
@@ -1726,7 +2033,7 @@ Custom Cypher policies are already supported via `[[policies.custom]]` in `.arch
 
 - **`relationship_mapper` port** — `RENDERS` is already there; `NAVIGATES_TO` / `SHARES_STATE` are fuzzy heuristics. Not worth it until MCP usage reveals a specific need.
 - **Go parser frontend** — big tree-sitter work, not the bottleneck.
-- **`knowledge_enricher` LLM-powered semantic pass** — biggest bet from the agent-onboarding analysis. Revisit once real-world MCP usage surfaces questions worth enriching.
+- ~~**`knowledge_enricher` LLM-powered semantic pass**~~ — **PARTIALLY SHIPPED** (`d2e6f06`, `a6c9221`, `3dde404`). `--extract-markdown` extracts Concept/Decision/Rationale nodes from Markdown docs via Claude API; `--extract-images` extracts ILLUSTRATES_CONCEPT edges from images via the vision API; `--extract-audio` transcribes audio/video files via faster-whisper into `DocumentNode` entries. Full graph-node enrichment (annotating existing Code nodes with LLM-inferred meaning) remains deferred — revisit once MCP usage surfaces specific needs.
 - **Web UI / dashboard** — Neo4j Browser at `:7475` is the interactive surface.
 - ~~**Real-time file watching**~~ — **SHIPPED** (`be939bc`). `codegraph watch` + `codegraph hook install` cover the automated re-index use case.
 
@@ -1747,6 +2054,17 @@ Custom Cypher policies are already supported via `[[policies.custom]]` in `.arch
 5. ~~**`.arch-policies.toml` schema versioning**~~ — **SHIPPED** (`bc70d01`). `[meta] schema_version = 1` added; forward-compat guard raises on unknown versions; backwards-compat confirmed (files without `[meta]` treated as v1).
 
 6. **Twenty's 184,809 import cycles** — surfaced by the e2e run. Are these real architectural problems or an artefact of the cycle detection (e.g. barrel files counting twice)? Needs a quick sample-and-validate. If the heuristic is over-reporting, cap the cycle length or dedupe by node set.
+
+8. **New findings from epic #271 code review** (5 MEDIUM, 4 LOW — not yet filed as issues):
+   - `[MEDIUM]` `clone.py:75-88` — shallow→full clone transition doesn't unshallow; ownership data silently wrong.
+   - `[MEDIUM]` `semantic_extract.py:96-103` — cache race: concurrent writers share the same `.tmp` path.
+   - `[MEDIUM]` `semantic_extract.py:193` / `vision_extract.py:141` — `response.content[0].text` raises `IndexError` on empty content list.
+   - `[MEDIUM]` `transcribe.py:222-237` — path traversal via yt-dlp `video_id` in manual path construction.
+   - `[MEDIUM]` `cli.py:416` / `mcp.py:769` — repo-name validation missing `@` character.
+   - `[LOW]` `transcribe.py:62-65` — cache key missing `model_size`/`language`; stale cache hits possible.
+   - `[LOW]` `test_py_parser.py:65,95` / `test_loader_partitioning.py:69` — stale docstrings (17→23, 16→17 counts).
+   - `[LOW]` `test_transcribe.py:48` — dead class-level `call_count` never reset.
+   - `[LOW]` `test_mcp.py:895-904` — `_allow_write` state leak — monkeypatch records wrong value.
 
 ---
 
@@ -1803,6 +2121,8 @@ Repo-local plans under `.claude/plans/`:
 - `fix-install-test-flakiness.plan.md` — shipped as `1d538fa`.
 - `fix-issue-181-ownership-contract.plan.md` — shipped as `5d01a60`.
 - `simplify-delete-cascade.plan.md` — shipped as `54d2100`.
+- `extraction-validator.plan.md` — shipped as `e2ee2fb` (closes #269).
+- `codegraph-clone.plan.md` — shipped as `0728528` + `7cb1fdd` (closes #268).
 - `fix-mcp-structural-edge-double-write.plan.md` — shipped as `abc6776`.
 - `fix-mcp-file-level-exposes.plan.md` — shipped as `75af831`.
 - `resolve-npm-tsconfig-presets.plan.md` — shipped as `ec94bff`.

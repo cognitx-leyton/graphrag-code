@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import dataclasses
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional
 
@@ -32,10 +33,11 @@ class PackageNode:
     build_tool: Optional[str] = None
     package_manager: Optional[str] = None
     confidence: float = 0.0
+    repo: str = "default"
 
     @property
     def id(self) -> str:
-        return f"package:{self.name}"
+        return f"package:{self.repo}:{self.name}"
 
     @classmethod
     def from_framework_info(cls, name: str, info: "FrameworkInfo") -> "PackageNode":
@@ -67,10 +69,11 @@ class FileNode:
     is_entity: bool = False
     is_resolver: bool = False
     is_test: bool = False
+    repo: str = "default"
 
     @property
     def id(self) -> str:
-        return f"file:{self.path}"
+        return f"file:{self.repo}:{self.path}"
 
 
 @dataclass
@@ -85,10 +88,11 @@ class ClassNode:
     is_abstract: bool = False
     base_path: str = ""
     table_name: str = ""  # for entities
+    repo: str = "default"
 
     @property
     def id(self) -> str:
-        return f"class:{self.file}#{self.name}"
+        return f"class:{self.repo}:{self.file}#{self.name}"
 
 
 @dataclass
@@ -100,20 +104,22 @@ class FunctionNode:
     docstring: str = ""
     return_type: str = ""
     params_json: str = "[]"
+    repo: str = "default"
 
     @property
     def id(self) -> str:
-        return f"func:{self.file}#{self.name}"
+        return f"func:{self.repo}:{self.file}#{self.name}"
 
 
 @dataclass
 class InterfaceNode:
     name: str
     file: str
+    repo: str = "default"
 
     @property
     def id(self) -> str:
-        return f"interface:{self.file}#{self.name}"
+        return f"interface:{self.repo}:{self.file}#{self.name}"
 
 
 @dataclass
@@ -128,6 +134,7 @@ class MethodNode:
     return_type: str = ""
     params_json: str = "[]"
     docstring: str = ""
+    repo: str = "default"
 
     @property
     def id(self) -> str:
@@ -141,10 +148,11 @@ class EndpointNode:
     controller_class: str
     file: str
     handler: str
+    repo: str = "default"
 
     @property
     def id(self) -> str:
-        return f"endpoint:{self.method}:{self.path}@{self.file}#{self.handler}"
+        return f"endpoint:{self.method}:{self.path}@{self.repo}:{self.file}#{self.handler}"
 
 
 @dataclass
@@ -170,10 +178,11 @@ class GraphQLOperationNode:
     file: str
     resolver_class: str   # class id
     handler: str          # method name
+    repo: str = "default"
 
     @property
     def id(self) -> str:
-        return f"gqlop:{self.op_type}:{self.name}@{self.file}#{self.handler}"
+        return f"gqlop:{self.op_type}:{self.name}@{self.repo}:{self.file}#{self.handler}"
 
 
 @dataclass
@@ -190,10 +199,11 @@ class AtomNode:
     name: str
     file: str
     family: bool = False
+    repo: str = "default"
 
     @property
     def id(self) -> str:
-        return f"atom:{self.file}#{self.name}"
+        return f"atom:{self.repo}:{self.file}#{self.name}"
 
 
 @dataclass
@@ -210,10 +220,11 @@ class RouteNode:
     path: str
     component_name: str
     file: str
+    repo: str = "default"
 
     @property
     def id(self) -> str:
-        return f"route:{self.path}@{self.file}"
+        return f"route:{self.path}@{self.repo}:{self.file}"
 
 
 @dataclass
@@ -235,6 +246,79 @@ class EdgeGroupNode:
     @property
     def id(self) -> str:
         return f"edgegroup:{self.kind}:{self.name}"
+
+
+@dataclass
+class DocumentNode:
+    path: str
+    file_type: str       # "pdf", "markdown", future types
+    loc: int             # character count of extracted text
+    extracted_at: str    # ISO 8601 timestamp
+    repo: str = "default"
+
+    @property
+    def id(self) -> str:
+        return f"doc:{self.repo}:{self.path}"
+
+
+@dataclass
+class DocumentSectionNode:
+    path: str            # parent document path
+    heading: str
+    section_index: int
+    text_sample: str     # first 500 chars
+    repo: str = "default"
+
+    @property
+    def id(self) -> str:
+        return f"docsec:{self.repo}:{self.path}#{self.section_index}"
+
+
+def _slug(text: str) -> str:
+    """Collapse free-text into a safe ID fragment (no ``#``, ``:``, or spaces)."""
+    return re.sub(r"[^a-zA-Z0-9_.-]+", "_", text).strip("_").lower()
+
+
+@dataclass
+class ConceptNode:
+    name: str
+    description: str
+    source_file: str
+    extracted_by: str = "claude"
+    repo: str = "default"
+
+    @property
+    def id(self) -> str:
+        return f"concept:{self.repo}:{self.source_file}#{_slug(self.name)}"
+
+
+@dataclass
+class DecisionNode:
+    title: str
+    context: str
+    status: str
+    source_file: str
+    markdown_line: int = 0
+    extracted_by: str = "claude"
+    repo: str = "default"
+
+    @property
+    def id(self) -> str:
+        return f"decision:{self.repo}:{self.source_file}#{_slug(self.title)}"
+
+
+@dataclass
+class RationaleNode:
+    text: str
+    decision_title: str
+    source_file: str
+    rationale_index: int = 0
+    extracted_by: str = "claude"
+    repo: str = "default"
+
+    @property
+    def id(self) -> str:
+        return f"rationale:{self.repo}:{self.source_file}#{_slug(self.decision_title)}_{self.rationale_index}"
 
 
 # ── Edges ────────────────────────────────────────────────────
@@ -308,6 +392,20 @@ BELONGS_TO        = "BELONGS_TO"
 
 # Phase 10 — hyperedges / group relationships
 MEMBER_OF         = "MEMBER_OF"
+
+# Phase 11 — documents
+HAS_SECTION           = "HAS_SECTION"
+REFERENCES_DOCUMENT   = "REFERENCES_DOCUMENT"
+
+# Phase 12 — semantic extraction
+DOCUMENTS_CONCEPT       = "DOCUMENTS_CONCEPT"
+DECIDES                 = "DECIDES"
+JUSTIFIES               = "JUSTIFIES"
+SEMANTICALLY_SIMILAR_TO = "SEMANTICALLY_SIMILAR_TO"
+
+# Phase 13 — vision extraction
+ILLUSTRATES_CONCEPT     = "ILLUSTRATES_CONCEPT"
+SHOWS_ARCHITECTURE      = "SHOWS_ARCHITECTURE"
 
 
 # ── Test-file pairing conventions ────────────────────────────
