@@ -50,6 +50,31 @@ _FIXTURE_EDGES: list[dict] = [
     {"src": "n1", "dst": "n2", "type": "CALLS", "properties": {}},
 ]
 
+_FIXTURE_COMMUNITY_NODES: list[dict] = _FIXTURE_NODES + [
+    {"id": "n5", "labels": ["Function"],
+     "properties": {"name": "deleteUser", "file": "src/app.ts"}},
+    {"id": "n6", "labels": ["Method"],
+     "properties": {"name": "validate", "file": "src/app.ts"}},
+    {"id": "eg1", "labels": ["EdgeGroup"],
+     "properties": {"id": "community:0", "kind": "community",
+                    "label": "app-core", "node_count": 3}},
+    {"id": "eg2", "labels": ["EdgeGroup"],
+     "properties": {"id": "community:1", "kind": "community",
+                    "label": "app-util", "node_count": 2}},
+    {"id": "eg3", "labels": ["EdgeGroup"],
+     "properties": {"id": "community:2", "kind": "community",
+                    "label": "app-api", "node_count": 1}},
+]
+
+_FIXTURE_COMMUNITY_EDGES: list[dict] = _FIXTURE_EDGES + [
+    {"src": "n1", "dst": "eg1", "type": "MEMBER_OF", "properties": {"cid": 0}},
+    {"src": "n2", "dst": "eg1", "type": "MEMBER_OF", "properties": {"cid": 0}},
+    {"src": "n5", "dst": "eg1", "type": "MEMBER_OF", "properties": {"cid": 0}},
+    {"src": "n3", "dst": "eg2", "type": "MEMBER_OF", "properties": {"cid": 1}},
+    {"src": "n4", "dst": "eg2", "type": "MEMBER_OF", "properties": {"cid": 1}},
+    {"src": "n6", "dst": "eg3", "type": "MEMBER_OF", "properties": {"cid": 2}},
+]
+
 
 # ── HTML tests ────────────────────────────────────────────────────
 
@@ -118,6 +143,79 @@ def test_to_html_has_sidebar_elements(tmp_path: Path) -> None:
     assert 'id="info-panel"' in content
     assert 'id="legend"' in content
     assert 'id="stats"' in content
+
+
+def test_to_html_community_sidebar(tmp_path: Path) -> None:
+    """Community checkboxes rendered when EdgeGroup nodes present."""
+    out = tmp_path / "graph.html"
+    to_html(_FIXTURE_COMMUNITY_NODES, _FIXTURE_COMMUNITY_EDGES, out)
+    content = out.read_text()
+    assert 'id="communities"' in content
+    assert 'class="community-item"' in content
+    assert "app-core" in content
+    assert "app-util" in content
+    assert "app-api" in content
+    # Should have 3 community checkboxes
+    assert content.count('class="community-item"') == 3
+
+
+def test_to_html_community_hulls(tmp_path: Path) -> None:
+    """Convex hull JS present when communities exist."""
+    out = tmp_path / "graph.html"
+    to_html(_FIXTURE_COMMUNITY_NODES, _FIXTURE_COMMUNITY_EDGES, out)
+    content = out.read_text()
+    assert "convexHull" in content
+    assert "afterDrawing" in content
+
+
+def test_to_html_no_communities_graceful(tmp_path: Path) -> None:
+    """No crash and no community checkboxes when no EdgeGroup nodes."""
+    out = tmp_path / "graph.html"
+    to_html(_FIXTURE_NODES, _FIXTURE_EDGES, out)
+    content = out.read_text()
+    assert 'class="community-item"' not in content
+    # Graph still renders
+    assert "vis.Network" in content
+
+
+def test_to_html_diacritic_search(tmp_path: Path) -> None:
+    """Search handler includes NFD normalization for diacritic insensitivity."""
+    out = tmp_path / "graph.html"
+    to_html(_FIXTURE_NODES, _FIXTURE_EDGES, out)
+    content = out.read_text()
+    assert "normalize('NFD')" in content or 'normalize("NFD")' in content
+    # The diacritics regex should be present
+    assert "\\u0300-\\u036f" in content
+
+
+def test_to_html_community_label_xss(tmp_path: Path) -> None:
+    """Community labels containing HTML/JS are escaped."""
+    xss_nodes = _FIXTURE_NODES + [
+        {"id": "eg_xss", "labels": ["EdgeGroup"],
+         "properties": {"id": "community:xss", "kind": "community",
+                        "label": '<script>alert("xss")</script>', "node_count": 1}},
+    ]
+    xss_edges = _FIXTURE_EDGES + [
+        {"src": "n1", "dst": "eg_xss", "type": "MEMBER_OF", "properties": {"cid": 0}},
+    ]
+    out = tmp_path / "graph.html"
+    to_html(xss_nodes, xss_edges, out)
+    content = out.read_text()
+    # Raw <script> must NOT appear — it should be escaped
+    assert '<script>alert("xss")</script>' not in content
+    # Escaped form should be present somewhere in the sidebar
+    assert "&lt;script&gt;" in content or "\\x3c" in content
+
+
+def test_to_html_community_excludes_edgegroup_nodes(tmp_path: Path) -> None:
+    """EdgeGroup synthetic nodes should not appear as vis.js nodes."""
+    out = tmp_path / "graph.html"
+    to_html(_FIXTURE_COMMUNITY_NODES, _FIXTURE_COMMUNITY_EDGES, out)
+    content = out.read_text()
+    # EdgeGroup label should not appear in the legend (it's not a real node label)
+    assert 'data-label="EdgeGroup"' not in content
+    # The stats line should count only regular nodes, not EdgeGroup nodes
+    assert "6 nodes" in content  # 4 original + 2 extra, not 9
 
 
 # ── JSON tests ────────────────────────────────────────────────────
