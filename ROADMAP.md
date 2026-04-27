@@ -2,7 +2,7 @@
 
 > **Purpose of this document.** Capture enough context for a fresh agent session (or a human returning after time away) to continue work on codegraph without re-deriving state from scratch. Separate from the user-facing roadmap bullets in `README.md`, which stay short and pitch-oriented.
 >
-> **Last updated:** 2026-04-27 after commits `a6c9221` → `7cb1fdd` (codegraph clone command — index remote Git repos by URL, closes issue #268). v0.1.105.
+> **Last updated:** 2026-04-27 after commits `a6c9221` → `e2ee2fb` (parse-result validator to catch malformed extractions before Neo4j load, closes issue #269). v0.1.105.
 
 ---
 
@@ -27,8 +27,8 @@ Catch-up pass that synchronises all user-facing docs with the current codebase a
 
 ## TL;DR — where we are
 
-- **Branch:** `archon/task-feat-issue-268-codegraph-clone`. New `codegraph clone <github-url>` command — parses HTTPS/SSH GitHub URLs, clones (shallow by default) or pulls cached repos under `~/.codegraph/repos/<owner>/<repo>`, auto-detects packages, then delegates to the existing `_run_index()` pipeline. New `clone.py` module: `parse_github_url()`, `cache_dir()`, `clone_or_pull()`, `run_clone()`. 25 new tests. Closes issue #268. v0.1.105.
-- **Tests:** 977 passing (25 new in `test_clone.py`), 13 skipped, 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
+- **Branch:** `archon/task-feat-issue-269-extraction-validator`. New `parse_validator.py` module — validates `ParseResult` before Neo4j write: duplicate node IDs, dangling edge src/dst, unknown edge kinds, invalid confidence labels/scores. `--strict-validate` flag on `codegraph index`. 20 new tests. Closes issue #269. v0.1.105.
+- **Tests:** 1051 passing (20 new in `test_parse_validator.py`), 11 skipped, 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
 - **Graph indexed:** Twenty CRM is currently loaded into the local Neo4j container at `bolt://localhost:7688` (13,473 files, 2,559 classes, 6,088 methods, 5,562 CALLS, 6,708 hook usages, 4,593 RENDERS).
 - **MCP server:** 15 read-only tools (incl. new `describe_group`) + **2 write tools** (`wipe_graph`, `reindex_file`) gated by `--allow-write` flag + **29 prompt templates** (all Cypher blocks from `queries.md` auto-registered via `_register_query_prompts()`). `codegraph-mcp` console script registered. Smoke-tested via raw JSON-RPC.
 - **Package:** `cognitx-codegraph` v0.1.105 in `pyproject.toml`. Wheel + sdist build cleanly. **Not yet on PyPI** — needs one-time operational setup (Trusted Publisher registration). `release.yml` now waits for propagation and smoke-tests the published version.
@@ -43,6 +43,7 @@ Catch-up pass that synchronises all user-facing docs with the current codebase a
 ## Shipped since the last roadmap update (commit `ea07455`)
 
 ```
+e2ee2fb  feat(validate): add parse-result validator to catch malformed extractions before Neo4j load (#269)
 7cb1fdd  fix(clone): add --no-export/--no-benchmark/--no-analyze flags and post-processing
 0728528  feat(clone): add codegraph clone command to index remote Git repos
 a4bb1a2  feat(audio): Whisper-based audio/video transcription (#267) (#282)
@@ -74,6 +75,28 @@ e0a172d  feat(analyze): add Leiden community detection and graph analysis (#253)
 c4571c6  feat(cache): SHA-256 content-addressed cache for incremental indexing (#46) (#248)
 3f394de  fix(test): add watchdog to test extra so test_watch.py tests pass
 ```
+
+### validate — parse-result validator before Neo4j load (issue #269)
+
+- `e2ee2fb feat(validate)` — Three files changed (2 new, 1 updated):
+
+  **New files:**
+
+  1. **`codegraph/codegraph/parse_validator.py`** (~200 LOC) — Validation module. `VALID_EDGE_KINDS` (49 entries: 48 schema constants + `__STATS__` sentinel). `VALID_CONFIDENCE_LABELS` (`EXTRACTED`, `INFERRED`, `AMBIGUOUS`). `SYNTHETIC_ID_PREFIXES` (`external:`, `dec:`, `hook:`, `edgegroup:`) — these reference no on-disk node, so dangling-ref checks skip them. `validate_parse_result(result)` performs per-file validation: duplicate node IDs, edges whose `src_id`/`dst_id` reference an unknown node, edges with an unrecognised `kind`, edges with an invalid `confidence` label or `confidence_score` outside `[0.0, 1.0]`. `validate_cross_file_edges(edges, all_node_ids)` validates resolver-emitted cross-file edges against the full global node pool; skips `__STATS__` sentinel edges. `assert_valid(...)` raises `ValueError` with all error messages joined — used by strict mode.
+
+  2. **`codegraph/tests/test_parse_validator.py`** (20 tests) — Covers all 5 error classes (duplicate ID, dangling src/dst, unknown edge kind, invalid confidence label, out-of-range confidence score), all 4 synthetic prefix types accepted without false positives, `assert_valid` raise/pass behaviour, cross-file validation with global pool, `__STATS__` sentinel skipping, integration self-parse of real source files producing zero errors.
+
+  **Updated files:**
+
+  3. **`codegraph/codegraph/cli.py`** — Added `--strict-validate` flag (default: off) to `codegraph index`. Per-file validation runs after each parse, before `index_obj.add(result)`. Cross-file validation runs after `link_cross_file()`, before Neo4j write. Default mode: log warnings and continue. Strict mode: aggregate all errors across all files then raise `ConfigError` (exits cleanly with code 1). Cached results skip re-validation (errors were already reported on the original parse). Import added between `.ownership` and `.parser` (alphabetical order preserved).
+
+  **Code review (2 issues found and fixed):**
+  - `[STYLE]` `from .parse_validator` import placed after `.schema`, breaking alphabetical ordering → moved between `.ownership` and `.parser`.
+  - `[LINT]` `FunctionNode` and `MethodNode` imported but unused in `test_parse_validator.py` → removed.
+
+  **Pre-existing bug discovered (out of scope — separate issue):** `py_parser.py:482` emits `dst_id=f"col:{cls.id}#..."` but `ColumnNode.id` returns `f"column:{cls.id}#..."`. The `col:` vs `column:` prefix mismatch means HAS_COLUMN edges have dangling `dst_id` on Python ORM codebases. The validator correctly flags this. Not fixed here.
+
+  - **Validation:** 1051 tests pass (20 new), 11 skipped, 0 failures. Byte-compile clean.
 
 ### clone — index remote Git repos by URL (issue #268)
 
@@ -1748,17 +1771,17 @@ Beyond unit/integration tests, these were dogfooded against real systems:
 
 | Thing | Value |
 |---|---|
-| Current branch | `archon/task-feat-issue-268-codegraph-clone` |
+| Current branch | `archon/task-feat-issue-269-extraction-validator` |
 | Base branch | `main` |
-| Unpushed commits | Multiple — clone command (`7cb1fdd`, `0728528`) + audio transcription (`a4bb1a2`) + vision extraction (`a6c9221`) + markdown semantic extraction (`d2e6f06`) + PDF ingestion (`38bd173`) + repo-namespace fix (`6990e71`) + prior work |
+| Unpushed commits | Multiple — extraction validator (`e2ee2fb`) + clone command (`7cb1fdd`, `0728528`) + audio transcription (`a4bb1a2`) + vision extraction (`a6c9221`) + markdown semantic extraction (`d2e6f06`) + PDF ingestion (`38bd173`) + repo-namespace fix (`6990e71`) + prior work |
 | Open PR | None. |
-| Working tree | Clean (untracked: `.claude/plans/codegraph-clone.plan.md`) |
-| Test count | 977 passing + 13 skipped + 0 deselected |
+| Working tree | Clean (untracked: `.claude/plans/extraction-validator.plan.md`) |
+| Test count | 1051 passing + 11 skipped + 0 deselected |
 | Test runtime | ~16 s |
 | Byte-compile | Clean |
 | Last editable install | After `0728528`. Re-run `cd codegraph && .venv/bin/pip install -e ".[python,mcp,test,watch,analyze,docs,semantic,transcribe]"` after any `pyproject.toml` edit. |
 | Wheel built? | Not yet for v0.1.105. Run `cd codegraph && .venv/bin/pip install build && python -m build` to produce wheel + sdist. |
-| New files | `codegraph/codegraph/clone.py`, `tests/test_clone.py` |
+| New files | `codegraph/codegraph/parse_validator.py`, `tests/test_parse_validator.py`, `codegraph/codegraph/clone.py`, `tests/test_clone.py` |
 
 ---
 
@@ -2044,6 +2067,7 @@ Repo-local plans under `.claude/plans/`:
 - `fix-install-test-flakiness.plan.md` — shipped as `1d538fa`.
 - `fix-issue-181-ownership-contract.plan.md` — shipped as `5d01a60`.
 - `simplify-delete-cascade.plan.md` — shipped as `54d2100`.
+- `extraction-validator.plan.md` — shipped as `e2ee2fb` (closes #269).
 - `codegraph-clone.plan.md` — shipped as `0728528` + `7cb1fdd` (closes #268).
 - `fix-mcp-structural-edge-double-write.plan.md` — shipped as `abc6776`.
 - `fix-mcp-file-level-exposes.plan.md` — shipped as `75af831`.
