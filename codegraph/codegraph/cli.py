@@ -146,6 +146,42 @@ def init(
     ))
 
 
+# ── clone ──────────────────────────────────────────────────────────────
+
+@app.command()
+def clone(
+    url: str = typer.Argument(..., help="GitHub HTTPS or SSH URL to clone and index."),
+    packages: Optional[list[str]] = typer.Option(
+        None,
+        "--package", "-p",
+        help="Repo-relative path of a package to index (overrides auto-detect). Repeatable.",
+    ),
+    uri: str = typer.Option(DEFAULT_URI, "--uri", help="Neo4j Bolt URI."),
+    user: str = typer.Option(DEFAULT_USER, "--user", help="Neo4j user."),
+    password: str = typer.Option(DEFAULT_PASS, "--password", help="Neo4j password."),
+    full_clone: bool = typer.Option(False, "--full-clone", help="Full git history (enables ownership data)."),
+    as_json: bool = typer.Option(False, "--json", help="Emit stats as JSON on stdout."),
+    no_export: bool = typer.Option(False, "--no-export", help="Skip HTML/JSON export after indexing."),
+    no_benchmark: bool = typer.Option(False, "--no-benchmark", help="Skip token-reduction benchmark after indexing."),
+    no_analyze: bool = typer.Option(False, "--no-analyze", help="Skip Leiden community detection + GRAPH_REPORT after indexing."),
+) -> None:
+    """Clone a GitHub repo, cache it locally, and auto-index into Neo4j."""
+    from .clone import run_clone as _run_clone
+    raise typer.Exit(code=_run_clone(
+        url,
+        packages=packages,
+        uri=uri,
+        user=user,
+        password=password,
+        full_clone=full_clone,
+        as_json=as_json,
+        no_export=no_export,
+        no_benchmark=no_benchmark,
+        no_analyze=no_analyze,
+        console=console,
+    ))
+
+
 # ── repl (explicit) ──────────────────────────────────────────────────
 
 @app.command()
