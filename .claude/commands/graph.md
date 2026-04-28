@@ -18,13 +18,13 @@ Assumes:
 ## Canonical query patterns for this repo
 
 <!-- codegraph:stats-begin -->
-~20 files, 56 classes, 134 module functions, ~180 methods
+Run `codegraph stats` to populate this section with live graph counts.
 <!-- codegraph:stats-end -->
 
 ### Blast radius — who depends on a file?
 
 ```cypher
-MATCH (f:File)-[:IMPORTS]->(target:File {path: 'codegraph/codegraph/schema.py'})
+MATCH (f:File)-[:IMPORTS]->(target:File {id: 'file:codegraph:codegraph/codegraph/schema.py'})
 RETURN f.path AS caller
 ORDER BY f.path
 ```
@@ -66,7 +66,7 @@ ORDER BY dataclass_count DESC
 ### What decorators does a file use?
 
 ```cypher
-MATCH (:File {path: 'codegraph/codegraph/mcp.py'})-[:DEFINES_FUNC]->(fn:Function)-[:DECORATED_BY]->(d:Decorator)
+MATCH (:File {id: 'file:codegraph:codegraph/codegraph/mcp.py'})-[:DEFINES_FUNC]->(fn:Function)-[:DECORATED_BY]->(d:Decorator)
 RETURN fn.name, d.name
 ORDER BY fn.name
 ```
@@ -74,7 +74,7 @@ ORDER BY fn.name
 ### Unresolved (external) imports from a file
 
 ```cypher
-MATCH (:File {path: 'codegraph/codegraph/cli.py'})-[r:IMPORTS {external: true}]->(e:External)
+MATCH (:File {id: 'file:codegraph:codegraph/codegraph/cli.py'})-[r:IMPORTS {external: true}]->(e:External)
 RETURN e.specifier
 ORDER BY e.specifier
 ```

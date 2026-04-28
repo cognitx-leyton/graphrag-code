@@ -181,7 +181,7 @@ RETURN t.path
 ## 9. Ownership and review routing
 
 ```cypher
-// Last person to touch a file
+// Last person to touch a file (path lookup — primary key is id: "file:<repo>:<path>")
 MATCH (f:File {path:'packages/twenty-server/src/engine/core-modules/auth/services/auth.service.ts'})
 MATCH (f)-[r:LAST_MODIFIED_BY]->(a:Author)
 RETURN a.name, a.email, datetime({epochSeconds: r.at})

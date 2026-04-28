@@ -2,7 +2,7 @@
 
 > **Purpose of this document.** Capture enough context for a fresh agent session (or a human returning after time away) to continue work on codegraph without re-deriving state from scratch. Separate from the user-facing roadmap bullets in `README.md`, which stay short and pitch-oriented.
 >
-> **Last updated:** 2026-04-27 after PR #287 created — epic #271 graphify-parity closeout (closed 8 sub-issues #263–#270, opened PR to main). 9 new findings from code review noted for follow-up. v0.1.105.
+> **Last updated:** 2026-04-28 after `65a104a` — docs(schema): fix stale Cypher patterns to use id-based lookups (closes #272). Docs-only fix across 4 files + 2 live command syncs. 1057 tests pass. v0.1.112.
 
 ---
 
@@ -27,7 +27,7 @@ Catch-up pass that synchronises all user-facing docs with the current codebase a
 
 ## TL;DR — where we are
 
-- **Branch:** `archon/task-feat-issue-271-graphify-parity`. Epic #271 closeout — 8 sub-issues (#263–#270) closed, PR #287 open targeting `main`. No new code; all feature work was implemented in prior commits on this branch. v0.1.105.
+- **Branch:** `archon/task-docs-issue-272-stale-cypher-patterns`. Docs-only fix for issue #272 — stale `File {path:}` Cypher patterns updated to use `id`-based lookups across `graph.md`, `who-owns.md`, `queries.md`, and `schema.md`. v0.1.112.
 - **Tests:** 1057 passing, 11 skipped, 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
 - **Open PR:** [cognitx-leyton/codegraph#287](https://github.com/cognitx-leyton/codegraph/pull/287) — epic summary table, `Closes #271`, targets `main`.
 - **Graph indexed:** Twenty CRM is currently loaded into the local Neo4j container at `bolt://localhost:7688` (13,473 files, 2,559 classes, 6,088 methods, 5,562 CALLS, 6,708 hook usages, 4,593 RENDERS).
@@ -42,6 +42,31 @@ Catch-up pass that synchronises all user-facing docs with the current codebase a
 ---
 
 ## Shipped since the last roadmap update (commit `ea07455`)
+
+### docs — fix stale Cypher patterns to use id-based lookups (issue #272)
+
+- `65a104a docs(schema)` — Docs-only fix. No Python files touched. 6 tasks across 4 doc files + 2 live command syncs:
+
+  **Files updated:**
+  1. **`codegraph/codegraph/templates/claude/commands/graph.md`** (+ live sync) — 3x `File {path: '...'}` patterns rewritten to `File {id: 'file:codegraph:...'}` id-based lookups, matching the schema change from issue #273 where path stopped being the primary key.
+  2. **`codegraph/codegraph/templates/claude/commands/who-owns.md`** (+ live sync) — Added Cypher comment noting that `path` usage is intentional (`$ARGUMENTS` is user-supplied input, not a node lookup).
+  3. **`codegraph/queries.md`** — Updated comment: notes `id` is the primary key, `path` is a secondary property.
+  4. **`codegraph/docs/schema.md`** — Four sub-fixes:
+     - Constraint table: `:File` constraint changed from `path` → `id`; secondary indexes listed as `path, package, repo`; `:Package` constraint changed from `name` → `id`.
+     - FileNode properties table: added `id` (primary key, `file:{repo}:{rel_path}`) and `repo` rows.
+     - PackageNode properties table: added `id` and `repo` rows; `name` column no longer labelled "Unique".
+     - Interface Cypher query: added comment explaining `i.file` stores path, not id — lookup still correct because it's a property filter not a node merge.
+
+  **Code review (2 issues found post-initial-implementation and fixed):**
+  - `[INCONSISTENCY]` PackageNode properties table missing `id` + `repo` rows after constraint table was updated → added.
+  - `[INCONSISTENCY]` PackageNode `name` column still labelled "Unique" despite constraint change → label removed.
+
+  **Validation:** 1057 tests pass, 11 skipped, 0 failures. Byte-compile clean. Arch-check: 4/4 PASS.
+
+```
+65a104a  docs(schema): fix stale Cypher patterns to use id-based lookups (closes #272)
+b2cd9fa  feat(graphify-parity): close epic #271 — multimodal ingestion, multi-repo, UX polish + version bump 0.1.112
+```
 
 ### epic #271 closeout — graphify parity (no code, GitHub ops only)
 
@@ -1814,17 +1839,17 @@ Beyond unit/integration tests, these were dogfooded against real systems:
 
 | Thing | Value |
 |---|---|
-| Current branch | `archon/task-feat-issue-271-graphify-parity` |
+| Current branch | `archon/task-docs-issue-272-stale-cypher-patterns` |
 | Base branch | `main` |
-| Unpushed commits | Branch pushed — PR #287 open targeting `main` |
+| Unpushed commits | `65a104a` (docs fix for #272) — not yet pushed; PR #287 open for epic #271 targeting `main` |
 | Open PR | [#287](https://github.com/cognitx-leyton/codegraph/pull/287) — epic #271 graphify-parity closeout |
-| Working tree | Clean (untracked: `.claude/plans/epic-271-graphify-parity-closeout.plan.md`) |
+| Working tree | Clean (untracked: `.claude/plans/docs-stale-cypher-patterns.plan.md`) |
 | Test count | 1057 passing + 11 skipped + 0 deselected |
 | Test runtime | ~16 s |
 | Byte-compile | Clean |
 | Last editable install | After `0728528`. Re-run `cd codegraph && .venv/bin/pip install -e ".[python,mcp,test,watch,analyze,docs,semantic,transcribe]"` after any `pyproject.toml` edit. |
-| Wheel built? | Not yet for v0.1.105. Run `cd codegraph && .venv/bin/pip install build && python -m build` to produce wheel + sdist. |
-| New files | `codegraph/codegraph/parse_validator.py`, `tests/test_parse_validator.py`, `codegraph/codegraph/clone.py`, `tests/test_clone.py` |
+| Wheel built? | Not yet for v0.1.112. Run `cd codegraph && .venv/bin/pip install build && python -m build` to produce wheel + sdist. |
+| New files | None this session — docs-only changes. |
 
 ---
 
