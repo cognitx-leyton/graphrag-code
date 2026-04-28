@@ -97,7 +97,7 @@ nodes:
         echo "NOT_READY"
         exit 1
       fi
-    timeout: 120000
+    timeout: 900000
 
   # ═══════════════════════════════════════════════════════════════
   # Step 1+2: Research the issue
