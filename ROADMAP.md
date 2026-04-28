@@ -2,7 +2,7 @@
 
 > **Purpose of this document.** Capture enough context for a fresh agent session (or a human returning after time away) to continue work on codegraph without re-deriving state from scratch. Separate from the user-facing roadmap bullets in `README.md`, which stay short and pitch-oriented.
 >
-> **Last updated:** 2026-04-28 after `5067452` — fix(schema): normalize Unicode before slug hashing so canonical equivalents map to the same ID (closes #277). `_slug()` rewrite + 16 new tests. 1073 tests pass. v0.1.112.
+> **Last updated:** 2026-04-28 after `5dd9655` — feat(doc-parser): add setext/tilde heading support with fenced-code backtracking fix (closes #278). `_FENCED_CODE_RE` backtracking fix + `_SETEXT_HEADING_RE` + 6 new tests. 1079 tests pass. v0.1.112.
 
 ---
 
@@ -27,8 +27,8 @@ Catch-up pass that synchronises all user-facing docs with the current codebase a
 
 ## TL;DR — where we are
 
-- **Branch:** `archon/task-fix-issue-277-slug-unicode`. Fixes issue #277 — `_slug()` in `schema.py` now NFKD-normalises input before slug hashing so accented chars transliterate (`café` → `cafe`) and CJK/empty strings get a deterministic SHA-256[:8] fallback. Canonical Unicode equivalents map to the same ID. v0.1.112.
-- **Tests:** 1073 passing, 11 skipped, 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
+- **Branch:** `archon/task-feat-issue-278-markdown-tilde-setext`. Closes issue #278 — two CommonMark compliance gaps in `extract_markdown()`: (1) `_FENCED_CODE_RE` split into two alternation branches that exclude the fence character from the info string, preventing backtracking so a 4-backtick fence can no longer be closed by a 3-backtick close; (2) new `_SETEXT_HEADING_RE` handles `===`/`---` underline headings, merged with ATX headings sorted by document position. Also fixes duplicate heading bug when ATX heading followed by `===`/`---`. v0.1.112.
+- **Tests:** 1079 passing, 11 skipped, 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
 - **Open PR:** [cognitx-leyton/codegraph#287](https://github.com/cognitx-leyton/codegraph/pull/287) — epic summary table, `Closes #271`, targets `main`.
 - **Graph indexed:** Twenty CRM is currently loaded into the local Neo4j container at `bolt://localhost:7688` (13,473 files, 2,559 classes, 6,088 methods, 5,562 CALLS, 6,708 hook usages, 4,593 RENDERS).
 - **MCP server:** 15 read-only tools (incl. new `describe_group`) + **2 write tools** (`wipe_graph`, `reindex_file`) gated by `--allow-write` flag + **29 prompt templates** (all Cypher blocks from `queries.md` auto-registered via `_register_query_prompts()`). `codegraph-mcp` console script registered. Smoke-tested via raw JSON-RPC.
@@ -41,7 +41,46 @@ Catch-up pass that synchronises all user-facing docs with the current codebase a
 
 ---
 
-## Shipped since the last roadmap update (commit `5067452`)
+## Shipped since the last roadmap update (commit `5dd9655`)
+
+### feat(doc-parser) — setext/tilde heading support with fenced-code backtracking fix (issue #278)
+
+- `5dd9655 feat(doc-parser)` — Three source files changed, 2 new fixtures:
+
+  **Modified files:**
+
+  1. **`codegraph/codegraph/doc_parser.py`** — Three changes:
+     - `_FENCED_CODE_RE` rewritten as two alternation branches (one for backtick, one for tilde), excluding the fence character from the info string (`[^\n`]*` / `[^\n~]*`) to prevent regex backtracking. Added `\`*` / `~*` after the closing backreference so a closing fence can be longer than the opening one (CommonMark §4.5). Previously a 4-backtick opening could be spuriously closed by a 3-backtick line, producing false positive headings between the fake close and the real close.
+     - New `_SETEXT_HEADING_RE` constant — matches setext headings (`===` / `---` underline, min 3 chars), capturing the preceding content line.
+     - `extract_markdown()` now builds a unified heading list from both ATX (`_HEADING_RE`) and setext (`_SETEXT_HEADING_RE`) matches, sorted by document position. ATX match start positions collected into a set to skip any setext match whose start position collides with an ATX heading (prevents duplicates when `# Title` is followed by `===`).
+
+  2. **`codegraph/tests/test_doc_parser_markdown.py`** — 6 new tests:
+     - `test_extract_markdown_tilde_fence_ignored` — tilde fences strip fake headings inside.
+     - `test_extract_markdown_mixed_fences` — both backtick + tilde fences stripped.
+     - `test_extract_markdown_setext_headings` — setext-only document extracts correctly.
+     - `test_extract_markdown_mixed_atx_setext` — mixed styles returned in document order.
+     - `test_extract_markdown_setext_section_index_sequential` — indices are sequential.
+     - `test_extract_markdown_thematic_break_not_heading` — `---` after blank line is not a heading.
+
+  **New files:**
+
+  3. **`codegraph/tests/fixtures/markdown/setext.md`** — setext-only fixture.
+  4. **`codegraph/tests/fixtures/markdown/mixed-headings.md`** — ATX + setext interleaved fixture.
+
+  **Code review (2 bugs found and fixed during review pass):**
+  - `[BUG]` `_FENCED_CODE_RE` with `{3,}` allowed backreference to capture fewer characters than the opening fence, so a 4-backtick opening matched a 3-backtick close → false positive headings. Fixed with fence-char exclusion in info string + separate alternation branches.
+  - `[BUG]` ATX heading `# Title` followed by `===` matched both `_HEADING_RE` and `_SETEXT_HEADING_RE`, producing duplicate entries (`Title` + `# Title`). Fixed by collecting ATX match positions and skipping colliding setext matches.
+
+  **Validation:** 1079 tests pass (6 new), 11 skipped, 0 failures. Byte-compile clean.
+
+```
+5dd9655  feat(doc-parser): add setext/tilde heading support with fenced-code backtracking fix
+187a956  fix(schema): normalize Unicode before slug hashing (#306)
+```
+
+---
+
+## Shipped since `5067452`
 
 ### fix(schema) — normalize Unicode before slug hashing (issue #277)
 
@@ -115,7 +154,7 @@ b2cd9fa  feat(graphify-parity): close epic #271 — multimodal ingestion, multi-
 - Epic issue #271 closed with a summary comment linking all 8 sub-issues.
 - PR #287 created targeting `main` with epic summary table.
 - Arch-check: 4/4 PASS. Tests: 1057/1057 PASS.
-- 9 new findings from the consolidated code review noted above (8 → "Known open questions", 3 pre-existing trackers #277/#278/#285 already open). **#277 now closed** (`5067452`).
+- 9 new findings from the consolidated code review noted above (8 → "Known open questions", 3 pre-existing trackers #277/#278/#285 already open). **#277 now closed** (`5067452`). **#278 now closed** (`5dd9655`).
 
 ```
 19376d7  feat(export): polish graph HTML — community toggle, convex hull, search UX
@@ -1880,17 +1919,17 @@ Beyond unit/integration tests, these were dogfooded against real systems:
 
 | Thing | Value |
 |---|---|
-| Current branch | `archon/task-docs-issue-272-stale-cypher-patterns` |
+| Current branch | `archon/task-feat-issue-278-markdown-tilde-setext` |
 | Base branch | `main` |
-| Unpushed commits | `65a104a` (docs fix for #272) — not yet pushed; PR #287 open for epic #271 targeting `main` |
-| Open PR | [#287](https://github.com/cognitx-leyton/codegraph/pull/287) — epic #271 graphify-parity closeout |
-| Working tree | Clean (untracked: `.claude/plans/docs-stale-cypher-patterns.plan.md`) |
-| Test count | 1057 passing + 11 skipped + 0 deselected |
+| Unpushed commits | `5dd9655` (feat #278 — setext/tilde heading support) |
+| Open PR | None |
+| Working tree | Clean (untracked: `.claude/plans/markdown-tilde-setext.plan.md`) |
+| Test count | 1079 passing + 11 skipped + 0 deselected |
 | Test runtime | ~16 s |
 | Byte-compile | Clean |
 | Last editable install | After `0728528`. Re-run `cd codegraph && .venv/bin/pip install -e ".[python,mcp,test,watch,analyze,docs,semantic,transcribe]"` after any `pyproject.toml` edit. |
 | Wheel built? | Not yet for v0.1.112. Run `cd codegraph && .venv/bin/pip install build && python -m build` to produce wheel + sdist. |
-| New files | None this session — docs-only changes. |
+| New files | `codegraph/tests/fixtures/markdown/setext.md`, `codegraph/tests/fixtures/markdown/mixed-headings.md` |
 
 ---
 
