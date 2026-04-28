@@ -13,6 +13,8 @@ CONCEPTS = FIXTURES / "concepts.md"
 DECISIONS = FIXTURES / "decisions.md"
 EMPTY = FIXTURES / "empty.md"
 NO_HEADINGS = FIXTURES / "no-headings.md"
+SETEXT = FIXTURES / "setext.md"
+MIXED = FIXTURES / "mixed-headings.md"
 
 
 # ── Basic extraction ──────────────────────────────────────────────────
@@ -114,3 +116,72 @@ def test_extract_markdown_fenced_code_block_ignored(tmp_path):
     assert "Another Real Heading" in headings
     assert "Fake Heading Inside Fence" not in headings
     assert len(sections) == 2
+
+
+# ── Tilde fences ─────────────────────────────────────────────────────
+
+
+def test_extract_markdown_tilde_fence_ignored(tmp_path):
+    """Headings inside tilde-fenced code blocks should not be treated as sections."""
+    md = tmp_path / "tilde.md"
+    md.write_text(
+        "# Real Heading\n\n"
+        "~~~markdown\n"
+        "# Fake Heading Inside Tilde Fence\n"
+        "~~~\n\n"
+        "More text.\n",
+        encoding="utf-8",
+    )
+    _, sections = extract_markdown(md, "tilde.md")
+    headings = [s.heading for s in sections]
+    assert "Real Heading" in headings
+    assert "Fake Heading Inside Tilde Fence" not in headings
+    assert len(sections) == 1
+
+
+def test_extract_markdown_mixed_fences(tmp_path):
+    """Both backtick and tilde fences should be stripped."""
+    md = tmp_path / "mixed_fences.md"
+    md.write_text(
+        "# Top\n\n"
+        "```\n# Fake Backtick\n```\n\n"
+        "~~~\n# Fake Tilde\n~~~\n\n"
+        "## Bottom\n",
+        encoding="utf-8",
+    )
+    _, sections = extract_markdown(md, "mixed_fences.md")
+    headings = [s.heading for s in sections]
+    assert headings == ["Top", "Bottom"]
+
+
+# ── Setext headings ──────────────────────────────────────────────────
+
+
+def test_extract_markdown_setext_headings():
+    _, sections = extract_markdown(SETEXT, "docs/setext.md")
+    headings = [s.heading for s in sections]
+    assert headings == ["Introduction", "Details"]
+
+
+def test_extract_markdown_mixed_atx_setext():
+    _, sections = extract_markdown(MIXED, "docs/mixed-headings.md")
+    headings = [s.heading for s in sections]
+    assert headings == ["Overview", "ATX Subsection", "Another Top Section"]
+
+
+def test_extract_markdown_setext_section_index_sequential():
+    _, sections = extract_markdown(SETEXT, "docs/setext.md")
+    indices = [s.section_index for s in sections]
+    assert indices == list(range(len(sections)))
+
+
+def test_extract_markdown_thematic_break_not_heading(tmp_path):
+    """A --- preceded by a blank line is a thematic break, not a setext heading."""
+    md = tmp_path / "break.md"
+    md.write_text(
+        "Some text.\n\n---\n\nMore text.\n",
+        encoding="utf-8",
+    )
+    _, sections = extract_markdown(md, "break.md")
+    assert len(sections) == 1
+    assert sections[0].heading == "(untitled)"
