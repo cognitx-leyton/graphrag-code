@@ -23,6 +23,7 @@ Joins three ownership edges written by the Phase-7 ownership pass:
 
 ```bash
 codegraph query "
+// path (not id) — \$ARGUMENTS is a user-supplied repo-relative path
 MATCH (f:File {path: '$ARGUMENTS'})
 OPTIONAL MATCH (f)-[lm:LAST_MODIFIED_BY]->(last:Author)
 OPTIONAL MATCH (f)-[c:CONTRIBUTED_BY]->(co:Author)

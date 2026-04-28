@@ -23,7 +23,7 @@ The loader installs these on first run (`init_schema()`):
 
 | Label | Unique constraint | Secondary index(es) |
 |---|---|---|
-| `:File` | `path` | `package` |
+| `:File` | `id` | `path`, `package`, `repo` |
 | `:Class` | `id` | `name`, `file` |
 | `:Function` | `id` | `name` |
 | `:Method` | `id` | `name` |
@@ -40,7 +40,7 @@ The loader installs these on first run (`init_schema()`):
 | `:Author` | `email` | — |
 | `:Team` | `name` | — |
 | `:Route` | `id` | — |
-| `:Package` | `name` | — |
+| `:Package` | `id` | — |
 | `:EdgeGroup` | `id` | `kind` |
 | `:Document` | `id` | `path`, `file_type`, `repo` |
 | `:DocumentSection` | `id` | — |
@@ -64,7 +64,8 @@ Use these in your `WHERE` clauses for fast lookups — `WHERE c.name = 'Foo'` hi
 
 | Name | Type | Description |
 |---|---|---|
-| `name` | string | Unique package name; matches the `package` field on every `:File` inside it. |
+| `id` | string | `package:<repo>:<name>`. Unique. |
+| `name` | string | Package name; matches the `package` field on every `:File` inside it. |
 | `framework` | string | Display name returned by detection: `"React"`, `"Next.js"`, `"NestJS"`, `"FastAPI"`, `"Odoo"`, … |
 | `framework_version` | string \| null | Version pinned in `package.json` / `pyproject.toml`, when known. |
 | `typescript` | bool | True if the package uses TypeScript. |
@@ -75,6 +76,7 @@ Use these in your `WHERE` clauses for fast lookups — `WHERE c.name = 'Foo'` hi
 | `build_tool` | string \| null | `"vite"`, `"webpack"`, `"setuptools"`, … |
 | `package_manager` | string \| null | `"pnpm"`, `"npm"`, `"poetry"`, … |
 | `confidence` | float | Detector confidence 0.0-1.0. |
+| `repo` | string | Repository name. Defaults to `"default"`. |
 
 **Emitted by**: the framework-detection pass (`framework.py`) once per configured `-p <path>` scope, before any file-level work.
 
@@ -97,7 +99,8 @@ RETURN f.path LIMIT 20
 
 | Name | Type | Description |
 |---|---|---|
-| `path` | string | Repo-relative path (POSIX separators). Unique. |
+| `id` | string | `file:<repo>:<path>`. Unique. |
+| `path` | string | Repo-relative path (POSIX separators). |
 | `package` | string | Owning package name; foreign key to `:Package.name`. |
 | `language` | string | `"ts"`, `"tsx"`, `"py"`. |
 | `loc` | int | Lines of code (raw newline count). |
@@ -108,6 +111,7 @@ RETURN f.path LIMIT 20
 | `is_entity` | bool | TS/TypeORM — file contains `@Entity`. |
 | `is_resolver` | bool | TS/GraphQL — file contains `@Resolver`. |
 | `is_test` | bool | Filename matches a known test convention (TS: `*.spec.ts/x`, `*.test.ts/x`; Python: `test_*.py`, `*_test.py`). When true, the `:TestFile` label is also added. |
+| `repo` | string | Repository name. Defaults to `"default"`. |
 
 **Emitted by**: every parser. Test-file flagging happens during walk-time.
 
@@ -236,6 +240,7 @@ RETURN f.name, f.file
 ```cypher
 // All interfaces in a package
 MATCH (i:Interface)-[:BELONGS_TO]->()  // no direct edge — go via :File
+// path join — i.file stores the repo-relative path, not the file:<repo>:<path> id
 WITH i MATCH (f:File {path: i.file})-[:BELONGS_TO]->(p:Package)
 RETURN p.name, i.name
 ```
