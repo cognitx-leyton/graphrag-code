@@ -200,7 +200,13 @@ def _sections_from_pages(
 # ── Markdown extraction ─────────────────────────────────────────────
 
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
-_FENCED_CODE_RE = re.compile(r"^```[^\n]*\n.*?^```", re.MULTILINE | re.DOTALL)
+_FENCED_CODE_RE = re.compile(
+    r"^(?P<fence>`{3,})[^\n`]*\n.*?^(?P=fence)`*\s*$"
+    r"|"
+    r"^(?P<tfence>~{3,})[^\n~]*\n.*?^(?P=tfence)~*\s*$",
+    re.MULTILINE | re.DOTALL,
+)
+_SETEXT_HEADING_RE = re.compile(r"^(.+)\n(={3,}|-{3,})\s*$", re.MULTILINE)
 
 
 def extract_markdown(
@@ -254,10 +260,28 @@ def extract_markdown(
     # Replace fenced code blocks with same-length whitespace so that
     # heading regex positions stay valid for slicing the original content.
     defenced = _FENCED_CODE_RE.sub(lambda m: " " * len(m.group(0)), content)
-    headings = list(_HEADING_RE.finditer(defenced))
+
+    # Collect ATX headings (# … style).
+    atx_matches = list(_HEADING_RE.finditer(defenced))
+    unified: list[tuple[str, int, int]] = [
+        (m.group(2).strip(), m.start(), m.end())
+        for m in atx_matches
+    ]
+    # Collect setext headings (underline with === or ---).
+    # Skip any whose text line coincides with an ATX heading to avoid duplicates.
+    atx_starts = {m.start() for m in atx_matches}
+    for m in _SETEXT_HEADING_RE.finditer(defenced):
+        if m.start() in atx_starts:
+            continue
+        text = m.group(1).strip()
+        if text:
+            unified.append((text, m.start(), m.end()))
+    # Sort by document position so sections appear in reading order.
+    unified.sort(key=lambda t: t[1])
+
     sections: list[DocumentSectionNode] = []
 
-    if not headings:
+    if not unified:
         # No headings — return single section with full text sample if non-empty.
         if content.strip():
             sections.append(DocumentSectionNode(
@@ -268,13 +292,11 @@ def extract_markdown(
                 repo=repo_name,
             ))
     else:
-        for idx, match in enumerate(headings):
-            heading_text = match.group(2).strip()
+        for idx, (heading_text, _start, content_start) in enumerate(unified):
             # Section content: text from after this heading to the start of the
             # next heading (or end of file).
-            start = match.end()
-            end = headings[idx + 1].start() if idx + 1 < len(headings) else len(content)
-            section_content = content[start:end].strip()
+            end = unified[idx + 1][1] if idx + 1 < len(unified) else len(content)
+            section_content = content[content_start:end].strip()
             sections.append(DocumentSectionNode(
                 path=rel,
                 heading=heading_text,
