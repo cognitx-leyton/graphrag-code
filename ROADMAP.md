@@ -2,7 +2,7 @@
 
 > **Purpose of this document.** Capture enough context for a fresh agent session (or a human returning after time away) to continue work on codegraph without re-deriving state from scratch. Separate from the user-facing roadmap bullets in `README.md`, which stay short and pitch-oriented.
 >
-> **Last updated:** 2026-04-29 after `2038f73` — feat(transcribe): add `--transcribe-language` flag and language-keyed cache (closes #281 / #292). Language param threaded through `transcribe()`, `config.py`, `cli.py`; cache key now includes `model_size` + `language`. 1084 tests pass. v0.1.112.
+> **Last updated:** 2026-04-29 after `6df41ce` — fix(export): composite `hiddenReasons` map so search no longer resets legend/community visibility filters (closes #285). `setHidden(nodeId, reason, hide)` helper added; all three vis handlers (search, legend toggle, community toggle) use namespaced reason keys. 1085 tests pass. v0.1.112.
 
 ---
 
@@ -27,8 +27,8 @@ Catch-up pass that synchronises all user-facing docs with the current codebase a
 
 ## TL;DR — where we are
 
-- **Branch:** `archon/task-feat-issue-281-whisper-language-flag`. Closes issues #281 + #292 — exposes `--transcribe-language` CLI flag for Whisper (previously hardcoded `"en"`); fixes cache key to include `model_size` + `language` so stale hits from different language/model combos are impossible. Config field `transcribe_language` wired through TOML → `CodegraphConfig` → `_run_index()` → `transcribe()`. v0.1.112.
-- **Tests:** 1084 passing, 11 skipped, 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
+- **Branch:** `archon/task-fix-issue-285-search-legend-community-reset`. Closes issue #285 — composite `hiddenReasons` map in the HTML export so clearing a search no longer unhides nodes that were hidden by legend or community toggles. `setHidden(nodeId, reason, hide)` helper; namespaced reason keys (`'search'`, `'legend:<label>'`, `'community:<cid>'`). `hiddenCommunities` object preserved for hull renderer. v0.1.112.
+- **Tests:** 1085 passing, 11 skipped, 0 warnings. Run via `.venv/bin/python -m pytest tests/ -q` from `codegraph/`.
 - **Open PR:** [cognitx-leyton/codegraph#287](https://github.com/cognitx-leyton/codegraph/pull/287) — epic summary table, `Closes #271`, targets `main`.
 - **Graph indexed:** Twenty CRM is currently loaded into the local Neo4j container at `bolt://localhost:7688` (13,473 files, 2,559 classes, 6,088 methods, 5,562 CALLS, 6,708 hook usages, 4,593 RENDERS).
 - **MCP server:** 15 read-only tools (incl. new `describe_group`) + **2 write tools** (`wipe_graph`, `reindex_file`) gated by `--allow-write` flag + **29 prompt templates** (all Cypher blocks from `queries.md` auto-registered via `_register_query_prompts()`). `codegraph-mcp` console script registered. Smoke-tested via raw JSON-RPC.
@@ -38,6 +38,39 @@ Catch-up pass that synchronises all user-facing docs with the current codebase a
 - **Onboarding:** `codegraph init` scaffolds everything needed to dogfood codegraph in any repo. Live-tested against 3 fixtures including the real Twenty monorepo (13k files indexed end-to-end).
 - **Python Stage 2:** FastAPI / Flask / Django / SQLAlchemy framework detection + `:Endpoint` nodes. `/trace-endpoint` now works against Python repos.
 - **Incremental re-indexing:** `codegraph index --since <git-ref>` diffs git, cleans stale subgraphs, and upserts only touched files. Implies `--no-wipe`. REPL supports `index --since HEAD~1`. Non-code files (`.md`, `.json`, `.yml`, etc.) are now filtered from the diff before processing.
+
+---
+
+## Shipped since the last roadmap update (commit `6df41ce`)
+
+### fix(export) — composite hiddenReasons so search doesn't reset legend/community filters (issue #285)
+
+- `6df41ce fix(export)` — Two files changed, 1 test added/strengthened:
+
+  **Modified files:**
+
+  1. **`codegraph/codegraph/export.py`** — Added `hiddenReasons` map + `setHidden(nodeId, reason, hide)` helper in `_html_script()`. Each of the three visibility controls now uses a namespaced reason key:
+     - Search handler: `'search'` reason — `setHidden(n.id, 'search', !match)` on non-empty query; `setHidden(n.id, 'search', false)` on clear. Clears only its own reason, never clobbers legend/community state.
+     - Legend toggle: `'legend:' + lbl` reason — label-specific so multi-label nodes accumulate/shed reasons correctly.
+     - Community toggle: `'community:' + cid` reason — community-specific.
+     - `hiddenCommunities` object retained for the hull renderer (`hiddenCommunities[comm.id]` read at hull-draw time).
+     - Node hidden state = `Object.keys(hiddenReasons[nodeId]).length > 0` — OR-combination across all reasons.
+
+  2. **`codegraph/tests/test_export.py`** — New `test_to_html_hidden_reasons_coordination` test:
+     - Asserts `hiddenReasons` map and `setHidden` helper are emitted.
+     - Asserts search, legend, and community handlers use `setHidden`.
+     - Asserts old `nodes.update({id: n.id, hidden: false})` absolute-reset pattern is gone.
+     - Asserts `hiddenCommunities` is still emitted (hull-renderer guard).
+
+  **Code review (1 issue found and fixed during review pass):**
+  - `[TEST GAP]` Initial test didn't assert `hiddenCommunities` presence — hull renderer silently breaks if it's removed. Fixed: added `assert "hiddenCommunities" in content`.
+
+  **Validation:** 1085 tests pass (1 new), 11 skipped, 0 failures. Byte-compile clean.
+
+```
+6df41ce  fix(export): composite hiddenReasons so search doesn't reset legend/community filters
+0b5fffa  feat(transcribe): --transcribe-language flag + cache invalidation by lang/model (closes #281, #292)
+```
 
 ---
 
